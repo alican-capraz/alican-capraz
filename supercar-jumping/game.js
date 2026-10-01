@@ -674,7 +674,8 @@
     const trimMat = new T.MeshPhysicalMaterial({ color: lin(car.trim), metalness: 0.3, roughness: 0.4, clearcoat: 0.6 });
     const g = new T.Group();
     const body = new T.Mesh(extrude(lower, Wd - 0.2, 0.1, belt * 0.6, 0.06), paint);
-    const cabin = new T.Mesh(extrude(upper, Wd * 0.84 - 0.12, 0.06, belt, 0.22), MAT.glass);
+    const glassMat = MAT.glass.clone();
+    const cabin = new T.Mesh(extrude(upper, Wd * 0.84 - 0.12, 0.06, belt, 0.22), glassMat);
     const roofM = new T.Mesh(extrude(roof, Wd * 0.7 - 0.1, 0.05, ymax - 0.1, 0.1), paint);
     roofM.position.y = 0.012;
     [body, cabin, roofM].forEach((m) => { m.castShadow = true; m.receiveShadow = true; g.add(m); });
@@ -714,25 +715,30 @@
       const sp = new T.Mesh(new T.BoxGeometry(0.3, 0.04, Wd * 0.94), MAT.black);
       sp.position.set(L / 2 - 0.05, yb - 0.02, 0); g.add(sp);
     }
+    const loose = []; // kazada kopabilen parçalar
     if (P.wing) {
+      const wingG = new T.Group();
       const wing = new T.Mesh(new T.BoxGeometry(0.42, 0.05, Wd * 0.96), trimMat);
-      wing.position.set(-L / 2 + 0.25, 0.86 * Hh, 0); wing.castShadow = true; g.add(wing);
+      wing.position.set(-L / 2 + 0.25, 0.86 * Hh, 0); wing.castShadow = true; wingG.add(wing);
       for (const s of [-1, 1]) {
         const st = new T.Mesh(new T.BoxGeometry(0.08, 0.26 * Hh, 0.04), MAT.black);
-        st.position.set(-L / 2 + 0.3, 0.73 * Hh, s * 0.5); g.add(st);
+        st.position.set(-L / 2 + 0.3, 0.73 * Hh, s * 0.5); wingG.add(st);
         const ep = new T.Mesh(new T.BoxGeometry(0.5, 0.18, 0.03), trimMat);
-        ep.position.set(-L / 2 + 0.25, 0.86 * Hh, s * Wd * 0.48); g.add(ep);
+        ep.position.set(-L / 2 + 0.25, 0.86 * Hh, s * Wd * 0.48); wingG.add(ep);
       }
+      g.add(wingG); loose.push(wingG);
     }
     if (P.ducktail) {
       const dt = new T.Mesh(new T.BoxGeometry(0.3, 0.05, Wd * 0.8), trimMat);
       dt.position.set(-L / 2 + 0.1, 0.62 * Hh, 0); dt.rotation.z = 0.25; g.add(dt);
     }
     if (P.rack) {
+      const rackG = new T.Group();
       for (const s of [-1, 1]) {
         const rail = new T.Mesh(new T.BoxGeometry(L * 0.5, 0.05, 0.05), MAT.chrome);
-        rail.position.set(-L * 0.1, Hh + 0.07, s * Wd * 0.3); g.add(rail);
+        rail.position.set(-L * 0.1, Hh + 0.07, s * Wd * 0.3); rackG.add(rail);
       }
+      g.add(rackG); loose.push(rackG);
     }
     // Tekerlekler
     const wheels = [];
@@ -752,9 +758,91 @@
         g.add(w); wheels.push(w);
       }
     }
-    return { group: g, wheels, exhausts, car };
+    const deform = [body, cabin, roofM].map((m) => ({ mesh: m, orig: Float32Array.from(m.geometry.attributes.position.array) }));
+    const glassOrig = { color: glassMat.color.clone(), roughness: glassMat.roughness };
+    const attach = [...loose, ...wheels].map((o) => ({ o, pos: o.position.clone(), rot: o.rotation.clone() }));
+    return { group: g, wheels, exhausts, car, deform, loose, glassMat, glassOrig, attach, L, Hh, Wd, smoke: 0, detached: 0 };
   }
   const carModels = CARS.map(buildCar);
+  // ---------- Görsel hasar: göçük, çatlak cam, kopan parçalar, duman ----------
+  const flying = [];
+  function resetDamage(m) {
+    for (const d of m.deform) {
+      d.mesh.geometry.attributes.position.array.set(d.orig);
+      d.mesh.geometry.attributes.position.needsUpdate = true;
+      d.mesh.geometry.computeVertexNormals();
+    }
+    m.glassMat.color.copy(m.glassOrig.color); m.glassMat.roughness = m.glassOrig.roughness;
+    for (const a of m.attach) {
+      if (a.o.parent !== m.group) { scene.remove(a.o); m.group.add(a.o); }
+      a.o.position.copy(a.pos); a.o.rotation.copy(a.rot); a.o.scale.set(1, 1, 1);
+    }
+    flying.length = 0;
+    m.smoke = 0; m.detached = 0;
+  }
+  // (lx, ly): yerden/duvardan arabaya doğru yön, araç ekseninde. cost: darbenin hasar bedeli.
+  function applyDamage(m, lx, ly, cost) {
+    const k = clamp(cost / 900000, 0.12, 1.3);
+    // Darbe noktası: araç merkezinden darbe yönünün tersine, gövdenin kenarına
+    const cx = 0, cy = m.Hh * 0.5;
+    const ex = m.L * 0.5, ey = m.Hh * 0.5;
+    const t = Math.min(ex / Math.max(1e-3, Math.abs(lx)), ey / Math.max(1e-3, Math.abs(ly)));
+    const px = cx - lx * t, py = cy - ly * t;
+    const R = 0.9 + k * 1.1, depth = Math.min(0.55, 0.12 + k * 0.38);
+    for (const d of m.deform) {
+      const pos = d.mesh.geometry.attributes.position;
+      const a = pos.array;
+      const oy = d.mesh.position.y;
+      for (let i = 0; i < a.length; i += 3) {
+        const dx = a[i] - px, dy = a[i + 1] + oy - py, dz = a[i + 2] * 0.35;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist > R) continue;
+        const f = (1 - dist / R) ** 2;
+        const n = 0.7 + 0.6 * Math.abs(Math.sin(a[i] * 13.1 + a[i + 2] * 7.7));
+        a[i] += lx * depth * f * n;
+        a[i + 1] += ly * depth * f * n;
+        a[i + 2] *= 1 - 0.12 * f * k; // ezilen bölge içe toplanır
+      }
+      pos.needsUpdate = true;
+      d.mesh.geometry.computeVertexNormals();
+    }
+    // Cam çatlar: beyazlaşır ve matlaşır
+    m.glassMat.color.lerp(lin(0xb9c6d4), clamp(0.25 + k * 0.5, 0, 1));
+    m.glassMat.roughness = Math.min(0.85, m.glassMat.roughness + 0.25 * k + 0.1);
+    // Büyük darbede parçalar kopar: önce kanat/raf, sonra bir tekerlek
+    if (k > 0.35) {
+      const order = [...m.loose, ...m.wheels];
+      const cand = order.filter((o) => o.parent === m.group);
+      const n = k > 0.9 ? 2 : 1;
+      for (let i = 0; i < n && cand.length; i++) {
+        const o = i === 0 && m.loose.some((l) => l.parent === m.group) ? cand[0] : cand[Math.floor(Math.random() * cand.length)];
+        cand.splice(cand.indexOf(o), 1);
+        detach(m, o, k);
+      }
+    }
+    m.smoke = Math.min(1, m.smoke + 0.35 + k * 0.4);
+  }
+  const _wp = new T.Vector3(), _wq = new T.Quaternion();
+  function detach(m, o, k) {
+    o.getWorldPosition(_wp); o.getWorldQuaternion(_wq);
+    m.group.remove(o);
+    scene.add(o);
+    o.position.copy(_wp); o.quaternion.copy(_wq);
+    const r = G.run;
+    const vx = r ? r.vx * 0.7 : 0, vy = r ? Math.max(0, r.vy) : 0;
+    flying.push({ o, v: new T.Vector3(vx + (Math.random() - 0.5) * 10, vy + 4 + Math.random() * 8 * k, (Math.random() - 0.5) * 12), w: new T.Vector3((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14) });
+    m.detached++;
+  }
+  function updateFlying(dt) {
+    for (const f of flying) {
+      f.v.y -= 9.81 * dt;
+      f.o.position.addScaledVector(f.v, dt);
+      const gy = terrainY(f.o.position.x, f.o.position.z) + 0.3;
+      if (f.o.position.y < gy) { f.o.position.y = gy; f.v.y = Math.abs(f.v.y) * 0.35; f.v.x *= 0.85; f.v.z *= 0.85; f.w.multiplyScalar(0.8); }
+      f.o.rotation.x += f.w.x * dt; f.o.rotation.y += f.w.y * dt; f.o.rotation.z += f.w.z * dt;
+    }
+  }
+
   const carRoot = new T.Group();
   scene.add(carRoot);
   let activeCar = null;
@@ -808,6 +896,32 @@
           vel[i * 3 + 1] -= 4 * dt;
           const dr = 1 - 1.4 * dt;
           vel[i * 3] *= dr; vel[i * 3 + 2] *= dr;
+          pos[i * 3] += vel[i * 3] * dt; pos[i * 3 + 1] += vel[i * 3 + 1] * dt; pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+        }
+        g.attributes.position.needsUpdate = true;
+      },
+      clear() { for (let i = 0; i < MAX; i++) { life[i] = 0; pos[i * 3 + 1] = -1e5; } },
+    };
+  })();
+  // Kaza dumanı: koyu, büyüyen ve yükselen parçacıklar
+  const smoke = (() => {
+    const MAX = 240;
+    const pos = new Float32Array(MAX * 3), vel = new Float32Array(MAX * 3), life = new Float32Array(MAX), age = new Float32Array(MAX);
+    for (let i = 0; i < MAX; i++) pos[i * 3 + 1] = -1e5;
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.BufferAttribute(pos, 3));
+    const mat = new T.PointsMaterial({ map: snowTex, size: 2.4, transparent: true, depthWrite: false, opacity: 0.55, color: lin(0x3a3d44) });
+    const pts = new T.Points(g, mat);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    let head = 0;
+    return {
+      spawn(x, y, z, vx, vy, vz, l) { const i = head; head = (head + 1) % MAX; pos.set([x, y, z], i * 3); vel.set([vx, vy, vz], i * 3); life[i] = l; age[i] = 0; },
+      update(dt) {
+        for (let i = 0; i < MAX; i++) {
+          if (life[i] <= 0) continue;
+          age[i] += dt;
+          if (age[i] > life[i]) { life[i] = 0; pos[i * 3 + 1] = -1e5; continue; }
           pos[i * 3] += vel[i * 3] * dt; pos[i * 3 + 1] += vel[i * 3 + 1] * dt; pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
         }
         g.attributes.position.needsUpdate = true;
@@ -1158,15 +1272,17 @@
     beat.set(null);
     PS.clear(); debris.clear(); barrier.reset();
     renderGarage();
+    resetDamage(activeCar);
   }
   function startRun() {
     initAudio();
     const car = CARS[G.carIdx];
     useCar(G.carIdx);
+    resetDamage(activeCar);
     G.wind = Math.round((Math.random() * 8 - 4) * 10) / 10;
     G.run = SJ.newRun(car, hill, G.wind);
     G.evIdx = 0; G.flags = {}; G.gateIdx = 0; G.kick = 0; G.kickV = 0; A.gear = 1; G.slow = 1; G.slowT = 0; G.wheelRot = 0; G.wheelSpin = 0; G.roll = 0; G.rollW = 0; G.acc = 0;
-    PS.clear(); debris.clear(); barrier.reset();
+    PS.clear(); debris.clear(); barrier.reset(); smoke.clear();
     G.toBeat = bestDistance();
     beat.set(G.toBeat);
     turntable.visible = false;
@@ -1271,6 +1387,7 @@
         }
         case 'crash': {
           const p = carCenter(r);
+          applyDamage(activeCar, e.lx, e.ly, e.cost);
           debris.spawn(p.x, p.y, r.vx * 0.6, 4, 22, lin(car.color));
           burst(p.x, p.y, 0, r.vx * 0.4, 4, 120, 12, 1.6);
           G.shake = 1.4; G.slow = 0.3; G.slowT = 1.0;
@@ -1281,6 +1398,7 @@
         }
         case 'wall': {
           const p = carCenter(r);
+          applyDamage(activeCar, e.lx, e.ly, e.cost);
           barrier.smash(e.speed, 0);
           debris.spawn(p.x, p.y, -4, 6, 26, lin(car.color));
           burst(hill.xBarrier - 1, p.y, 0, 6, 8, 160, 16, 1.8);
@@ -1290,7 +1408,7 @@
           say(pick([`Ve panolara ${Math.round(e.speed * 3.6)} km/sa ile daldı! Ortalık savaş alanı!`, 'Panolar paramparça! Bu reklamın faturası ağır olacak!', 'Duvara tam gaz! Araba takla atıyor!']), 3.5);
           break;
         }
-        case 'impact': { const p = carCenter(r); burst(p.x, p.y - 0.4, 0, r.vx * 0.3, 3, 30, 7, 1.1); debris.spawn(p.x, p.y, r.vx * 0.5, 3, 3); thump(clamp(e.hit / 15, 0.2, 1)); G.shake = Math.max(G.shake, 0.5); break; }
+        case 'impact': { const p = carCenter(r); applyDamage(activeCar, e.lx, e.ly, e.cost); G.rollW += (Math.random() - 0.5) * e.hit * 0.8; burst(p.x, p.y - 0.4, 0, r.vx * 0.3, 3, 30, 7, 1.1); debris.spawn(p.x, p.y, r.vx * 0.5, 3, 3); thump(clamp(e.hit / 15, 0.2, 1)); G.shake = Math.max(G.shake, 0.5); break; }
         default: break;
       }
     }
@@ -1304,6 +1422,14 @@
   }
 
   // ---------- Sonuç ----------
+  function damageNote(r) {
+    const parts = [];
+    const tumbles = r.events.filter((e) => e.type === 'impact').length;
+    if (r.crashed) parts.push(tumbles ? `Yere çakıldı, ${tumbles} kez yuvarlandı` : 'Yere çakıldı');
+    if (r.wallHit) parts.push(`panolara ${Math.round(r.wallSpeed * 3.6)} km/sa ile çarptı`);
+    const t = parts.join(', ');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
   function showResult() {
     const r = G.run;
     G.phase = 'result';
@@ -1335,15 +1461,15 @@
         <div class="res-dist">${sc.dnf ? '—' : sc.dist.toFixed(1)}<small>m</small></div>
         <div class="res-total"><small>Toplam puan</small><b>${sc.total.toFixed(1)}</b></div>
         <div class="res-note">${note}</div>
-        ${r.wallHit ? `<div class="res-damage"><span>Hasar bedeli</span><b>${r.damage.toLocaleString('tr-TR')} ₺</b><span>Panolara ${Math.round(r.wallSpeed * 3.6)} km/sa ile çarptı</span></div>` : ''}
+        ${r.damage > 0 ? `<div class="res-damage"><span>Hasar bedeli</span><b>${(Math.round(r.damage / 100) * 100).toLocaleString('tr-TR')} ₺</b><span>${damageNote(r)}</span></div>` : ''}
       </div>
       ${sc.dnf ? '' : `<div class="res-table">
         <div class="judges"><span class="jl">Hakemler</span>${judgesHtml}</div>
         <div class="pts">
-          <div class="pt"><small>Mesafe</small><b>${sc.distPts.toFixed(1)}</b></div>
-          <div class="pt"><small>Stil</small><b>${sc.stylePts.toFixed(1)}</b></div>
-          <div class="pt"><small>Rüzgâr</small><b>${fmt(sc.windPts)}</b></div>
-          <div class="pt"><small>K-${hill.K}</small><b>${fmt(sc.dist - hill.K)}</b></div>
+          <div class="pt"><small>Mesafe puanı</small><b>${sc.distPts.toFixed(1)}</b></div>
+          <div class="pt"><small>Stil puanı</small><b>${sc.stylePts.toFixed(1)}</b></div>
+          <div class="pt"><small>Rüzgâr düzeltmesi</small><b>${fmt(sc.windPts)}</b></div>
+          <div class="pt"><small>K-${hill.K} farkı</small><b>${fmt(sc.dist - hill.K)} m</b></div>
         </div>
       </div>`}
       <div class="row res-actions">
@@ -1464,7 +1590,7 @@
     }
     g.rotation.order = 'ZXY';
     g.rotation.set(G.roll, 0, r.phi);
-    for (const w of m.wheels) w.rotation.z = -G.wheelRot;
+    for (const w of m.wheels) if (w.parent === g) w.rotation.z = -G.wheelRot;
     const on = r.nitro > 0 && r.mode !== 'wreck';
     m.exhausts.forEach((f) => {
       f.visible = on;
@@ -1629,6 +1755,9 @@
     PS.update(dt);
     debris.update(dt);
     barrier.update(dt);
+    updateFlying(dt);
+    smoke.update(dt);
+    if (r && activeCar && activeCar.smoke > 0 && G.phase !== 'menu' && Math.random() < activeCar.smoke * 0.8) { const p = carCenter(r); smoke.spawn(p.x, p.y + 0.4, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 1.5, 1.5 + Math.random() * 1.5, (Math.random() - 0.5) * 1.2, 2.2 + Math.random()); }
     syncCar(dt);
     updateCamera(dtReal);
     flakes.update(dtReal, G.t, camera.position);

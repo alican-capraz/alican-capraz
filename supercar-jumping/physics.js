@@ -333,6 +333,10 @@
     }
   }
 
+  // Dünya yönünü (yerden arabaya doğru normal) aracın yerel eksenine çevirir: görsel hasar nereye vuracağını bilsin
+  const localDir = (r, wx, wy) => { const c = Math.cos(-r.phi), s = Math.sin(-r.phi); return { lx: wx * c - wy * s, ly: wx * s + wy * c }; };
+  const energyTL = (m, v) => 0.5 * m * v * v / 4; // oyun içi hasar bedeli (₺)
+
   function contact(r) {
     const c = r.car, h = r.hill;
     const th = Math.atan(h.slope(r.x));
@@ -369,7 +373,10 @@
       r.vy = vt * ty * 0.8 + ny * vn * 0.35;
       r.om = (diff > 0 ? 1 : -1) * (3 + kick * 2);
       r.wreckT = 0;
-      ev(r, 'crash', { vn, diff: dd });
+      // Dik vuruş ve açılı (burun/sırt üstü) temas birlikte hasar yapar
+      const hitE = energyTL(c.mass, vn) + energyTL(c.mass, Math.abs(vt) * Math.min(1, Math.sin(dd * Math.PI / 180)) * 0.6);
+      r.damage += hitE;
+      ev(r, 'crash', Object.assign({ vn, diff: dd, cost: hitE, speed: Math.hypot(r.vx, r.vy) }, localDir(r, nx, ny)));
     } else {
       r.mode = 'ground';
       r.v = Math.max(0, vt * (1 - 0.35 * dd / 32) - 0.05 * Math.max(0, vn));
@@ -401,16 +408,23 @@
       r.y = gy;
       if (vn < 0) {
         const hit = -vn;
-        vn = hit * 0.32;
-        vt *= 0.93;
-        vt -= Math.min(Math.abs(vt), 5.5 * G * DT) * Math.sign(vt);
-        r.om = r.om * 0.75 + (hit > 3 ? (Math.random() - 0.5) * hit * 0.9 : 0);
-        if (hit > 3) ev(r, 'impact', { hit });
+        // Takla atan araba her vuruşta seker; dönüş hızı yukarı fırlatır
+        vn = hit * 0.4 + Math.min(6, Math.abs(r.om) * 0.35);
+        vt *= 0.96;
+        r.om = r.om * 0.8 + (hit > 2 ? (Math.random() - 0.5) * hit * 0.7 : 0);
+        if (hit > 3) {
+          const cost = energyTL(c.mass, hit);
+          r.damage += cost;
+          ev(r, 'impact', Object.assign({ hit, cost }, localDir(r, nx, ny)));
+        }
       }
-      vt -= Math.min(Math.abs(vt), 4 * G * DT) * Math.sign(vt);
+      // Karda kayma sürtünmesi düşük: hızlı kaza uzun bir takla serisine dönüşür
+      vt -= Math.min(Math.abs(vt), 0.7 * G * DT) * Math.sign(vt);
+      // Yere sürtünen gövde yuvarlanır: dönüş hızı kayma hızına doğru çekilir
+      const roll = Math.max(-9, Math.min(9, -vt / (c.h * 0.6)));
+      r.om += (roll - r.om) * 0.04;
       r.vx = vt * tx + vn * nx;
       r.vy = vt * ty + vn * ny;
-      r.om *= 0.985;
       // Yerde kalınca sırt veya tekerlek üstüne otur
       if (Math.hypot(r.vx, r.vy) < 2.5) {
         const target = Math.abs(wrap(r.phi - th)) > Math.PI / 2 ? th + Math.PI : th;
@@ -418,7 +432,7 @@
         r.om *= 0.9;
       }
     }
-    if ((Math.hypot(r.vx, r.vy) < 0.6 && r.wreckT > 1.5) || r.wreckT > 9) finish(r);
+    if ((Math.hypot(r.vx, r.vy) < 0.6 && r.wreckT > 1.5) || r.wreckT > 16) finish(r);
   }
 
   // Pist sonundaki panolara çarpma: panolar parçalanır, araç takla atarak geri sekip durur
@@ -434,12 +448,13 @@
     r.wallHit = true;
     r.wallT = r.t;
     r.wallSpeed = Math.abs(sp);
-    r.damage = Math.round(0.5 * c.mass * sp * sp / 40 / 100) * 100;
+    const wallCost = energyTL(c.mass, sp);
+    r.damage += wallCost;
     r.vx = -Math.abs(vfx) * 0.06;
     r.vy = 3 + Math.abs(sp) * 0.09;
     r.om = -(4 + Math.abs(sp) * 0.07);
     r.wreckT = 0;
-    ev(r, 'wall', { speed: r.wallSpeed, damage: r.damage });
+    ev(r, 'wall', Object.assign({ speed: r.wallSpeed, cost: wallCost }, localDir(r, -1, 0)));
   }
 
   function finish(r) {
