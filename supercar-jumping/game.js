@@ -432,6 +432,78 @@
     };
   })();
 
+  // Pist üstüne serilmiş renkli şerit (nitro bölgesi mavi, burun kaldırma bölgesi sarı)
+  function ribbon(x0, x1, color, opacity, frac) {
+    const pos = [], idx = [];
+    let n = 0;
+    for (let x = x0; x <= x1 + 0.01; x += 1) {
+      const hw = halfW(x) * frac, y = hill.y(Math.min(x, TO)) + 0.025;
+      pos.push(x, y, -hw, x, y, hw);
+      if (n) { const a = (n - 1) * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      n++;
+    }
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    const m = new T.Mesh(g, new T.MeshBasicMaterial({ color: lin(color), transparent: true, opacity, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, side: T.DoubleSide }));
+    scene.add(m);
+    return m;
+  }
+  const NZ0 = hill.cfg.NZ0, NZ1 = hill.cfg.NZ1;
+  const nitroRibbon = ribbon(NZ0, NZ1, 0x2f7dff, 0.22, 0.92);
+  ribbon(TO - SJ.ZONE, TO - 0.6, 0xf5b700, 0.38, 0.92);
+  // Nitro kapıları: üstünden geçerken hız hissi veren ışıklı kemerler
+  const gateLight = new T.MeshStandardMaterial({ color: lin(0x9fd6ff), emissive: lin(0x2f8dff), emissiveIntensity: 2.4 });
+  const gateFrame = new T.MeshStandardMaterial({ color: lin(0x18233a), roughness: 0.4, metalness: 0.7 });
+  const GATE_XS = [];
+  for (let x = NZ0; x <= NZ1; x += 10) {
+    GATE_XS.push(x);
+    const hw = halfW(x) + 0.5, y = trackY(x), ang = Math.atan(hill.slope(x));
+    const holder = new T.Object3D();
+    holder.position.set(x, y, 0); holder.rotation.z = ang;
+    for (const side of [-1, 1]) {
+      const post = new T.Mesh(new T.BoxGeometry(0.3, 4.6, 0.3), gateFrame);
+      post.position.set(0, 2.3, side * hw); holder.add(post);
+      const strip = new T.Mesh(new T.BoxGeometry(0.12, 4.2, 0.1), gateLight);
+      strip.position.set(-0.17, 2.3, side * (hw - 0.12)); holder.add(strip);
+    }
+    const beam = new T.Mesh(new T.BoxGeometry(0.4, 0.35, hw * 2 + 0.3), gateFrame);
+    beam.position.set(0, 4.6, 0); holder.add(beam);
+    const bar = new T.Mesh(new T.BoxGeometry(0.12, 0.12, hw * 2), gateLight);
+    bar.position.set(-0.22, 4.45, 0); holder.add(bar);
+    scene.add(holder);
+  }
+  {
+    const nitroTex = textTexture(512, 96, (g, w, h) => {
+      g.fillStyle = '#0b1730'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#6fc3ff'; g.font = `italic 800 70px ${fontStack}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('NİTRO BÖLGESİ', w / 2, h / 2 + 3);
+    });
+    const sign = new T.Mesh(new T.PlaneGeometry(7.4, 1.3), new T.MeshStandardMaterial({ map: nitroTex, emissive: lin(0x444444), emissiveMap: nitroTex }));
+    sign.rotation.y = -Math.PI / 2;
+    sign.position.set(NZ0 - 0.25, trackY(NZ0) + 5.5, 0);
+    sign.rotation.order = 'YXZ';
+    scene.add(sign);
+  }
+  // İnişte iki yanda sık ışık direkleri: yanından akıp geçen nesneler hız hissi verir
+  {
+    const xs = [];
+    for (let x = 6; x < TO - 2; x += 7) xs.push(x);
+    const pole = new T.InstancedMesh(new T.CylinderGeometry(0.07, 0.09, 3.2, 6), gateFrame, xs.length * 2);
+    const lamp = new T.InstancedMesh(new T.BoxGeometry(0.5, 0.12, 0.25), new T.MeshStandardMaterial({ color: lin(0xffffff), emissive: lin(0xfff1c8), emissiveIntensity: 2 }), xs.length * 2);
+    const m4 = new T.Matrix4();
+    let k = 0;
+    for (const x of xs) {
+      for (const side of [-1, 1]) {
+        const z = side * (halfW(x) + 1.15), y = terrainY(x, z);
+        pole.setMatrixAt(k, m4.makeTranslation(x, y + 1.6, z));
+        lamp.setMatrixAt(k, m4.makeTranslation(x, y + 3.2, z - side * 0.25));
+        k++;
+      }
+    }
+    scene.add(pole); scene.add(lamp);
+  }
+
   // Kalkış kenarı, start kapısı, kule, tribün
   {
     const red = new T.MeshStandardMaterial({ color: lin(0xe1342a), roughness: 0.5 });
@@ -573,7 +645,7 @@
     chrome: new T.MeshStandardMaterial({ color: lin(0xdfe4ea), roughness: 0.15, metalness: 1 }),
     tail: new T.MeshStandardMaterial({ color: lin(0x5a0a08), emissive: lin(0xff2a1a), emissiveIntensity: 1.6 }),
     head: new T.MeshStandardMaterial({ color: lin(0xffffff), emissive: lin(0xfff5d6), emissiveIntensity: 1.5 }),
-    flame: new T.MeshBasicMaterial({ color: lin(0x7fc8ff), transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false }),
+    flame: new T.MeshBasicMaterial({ color: lin(0x3f8cff), transparent: true, opacity: 0.75, blending: T.AdditiveBlending, depthWrite: false }),
   };
 
   function buildCar(car) {
@@ -820,64 +892,135 @@
     phase: 'menu', carIdx: 0, run: null, wind: 0,
     acc: 0, last: 0, t: 0, slow: 1, slowT: 0, shake: 0,
     records: loadRecords(), evIdx: 0, flags: {}, wheelRot: 0, wheelSpin: 0, roll: 0, rollW: 0,
-    countT: 0, toBeat: null, fov: 52,
+    countT: 0, toBeat: null, fov: 52, kick: 0, kickV: 0, gateIdx: 0, flash: 0,
   };
   const camState = { pos: new T.Vector3(SHOW_X + 8, showY + 3, 6), look: new T.Vector3(SHOW_X, showY + 1, 0), heading: 0, off: new T.Vector3(), lookOff: new T.Vector3() };
 
   // ---------- Ses ----------
-  const A = { ctx: null, on: true };
+  // Vitesli motor: devir hıza ve vitese göre hesaplanır; vites atınca devir düşer ve egzoz patlar.
+  const GEARS = [0, 75, 125, 175, 225, 280, 420]; // her vitesin üst hızı (km/sa)
+  const A = { ctx: null, on: true, gear: 1, shiftT: 0, rpm: 0.2 };
+  const buzz = (p) => { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) { /* desteklenmiyor */ } };
+  function noiseSrc() { const s = A.ctx.createBufferSource(); s.buffer = A.noiseBuf; s.loop = true; return s; }
   function initAudio() {
     if (A.ctx) { if (A.ctx.state === 'suspended') A.ctx.resume(); return; }
     try {
       const ac = new (window.AudioContext || window.webkitAudioContext)();
       A.ctx = ac;
-      A.master = ac.createGain(); A.master.gain.value = A.on ? 0.55 : 0; A.master.connect(ac.destination);
-      A.eng = ac.createOscillator(); A.eng.type = 'sawtooth';
-      A.eng2 = ac.createOscillator(); A.eng2.type = 'square';
-      A.engF = ac.createBiquadFilter(); A.engF.type = 'lowpass'; A.engF.frequency.value = 900;
-      A.engG = ac.createGain(); A.engG.gain.value = 0;
-      A.eng.connect(A.engF); A.eng2.connect(A.engF); A.engF.connect(A.engG); A.engG.connect(A.master);
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 5;
+      comp.connect(ac.destination);
+      A.master = ac.createGain(); A.master.gain.value = A.on ? 0.8 : 0; A.master.connect(comp);
       const buf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
       const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
       A.noiseBuf = buf;
-      A.wind = ac.createBufferSource(); A.wind.buffer = buf; A.wind.loop = true;
-      A.windF = ac.createBiquadFilter(); A.windF.type = 'bandpass'; A.windF.Q.value = 0.7; A.windF.frequency.value = 500;
+      // Motor: üç osilatör, distorsiyon, alçak geçiren filtre
+      A.o1 = ac.createOscillator(); A.o1.type = 'sawtooth';
+      A.o2 = ac.createOscillator(); A.o2.type = 'square';
+      A.o3 = ac.createOscillator(); A.o3.type = 'sawtooth'; A.o3.detune.value = 9;
+      const mix = ac.createGain(); mix.gain.value = 0.33;
+      [A.o1, A.o2, A.o3].forEach((o) => o.connect(mix));
+      const shaper = ac.createWaveShaper();
+      const curve = new Float32Array(1024);
+      for (let k = 0; k < 1024; k++) { const x = k / 512 - 1; curve[k] = Math.tanh(x * 3.2); }
+      shaper.curve = curve;
+      A.engF = ac.createBiquadFilter(); A.engF.type = 'lowpass'; A.engF.Q.value = 2;
+      A.engG = ac.createGain(); A.engG.gain.value = 0;
+      mix.connect(shaper); shaper.connect(A.engF); A.engF.connect(A.engG); A.engG.connect(A.master);
+      // Emiş gürültüsü
+      A.intake = noiseSrc();
+      A.intakeF = ac.createBiquadFilter(); A.intakeF.type = 'bandpass'; A.intakeF.Q.value = 0.9;
+      A.intakeG = ac.createGain(); A.intakeG.gain.value = 0;
+      A.intake.connect(A.intakeF); A.intakeF.connect(A.intakeG); A.intakeG.connect(A.master);
+      // Rüzgâr
+      A.wind = noiseSrc();
+      A.windF = ac.createBiquadFilter(); A.windF.type = 'bandpass'; A.windF.Q.value = 0.6;
       A.windG = ac.createGain(); A.windG.gain.value = 0;
       A.wind.connect(A.windF); A.windF.connect(A.windG); A.windG.connect(A.master);
-      A.eng.start(); A.eng2.start(); A.wind.start();
+      // Nitro uğultusu ve turbo ıslığı
+      A.roar = noiseSrc();
+      A.roarF = ac.createBiquadFilter(); A.roarF.type = 'lowpass'; A.roarF.frequency.value = 520;
+      A.roarG = ac.createGain(); A.roarG.gain.value = 0;
+      A.roar.connect(A.roarF); A.roarF.connect(A.roarG); A.roarG.connect(A.master);
+      A.whistle = ac.createOscillator(); A.whistle.type = 'sine';
+      A.whistleG = ac.createGain(); A.whistleG.gain.value = 0;
+      A.whistle.connect(A.whistleG); A.whistleG.connect(A.master);
+      [A.o1, A.o2, A.o3, A.intake, A.wind, A.roar, A.whistle].forEach((n) => n.start());
     } catch (e) { A.ctx = null; }
   }
-  function thump(strength) {
+  function burstSound(type, freq, q, gain, dur, sweepTo) {
     if (!A.ctx) return;
     const ac = A.ctx, t = ac.currentTime;
     const src = ac.createBufferSource(); src.buffer = A.noiseBuf;
-    const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 300 + strength * 900;
-    const g = ac.createGain(); g.gain.setValueAtTime(Math.min(1, 0.25 + strength * 0.5), t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.25 + strength * 0.5);
-    src.connect(f); f.connect(g); g.connect(A.master); src.start(t); src.stop(t + 1.2);
+    const f = ac.createBiquadFilter(); f.type = type; f.frequency.setValueAtTime(freq, t); f.Q.value = q;
+    if (sweepTo) f.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
+    const g = ac.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    src.connect(f); f.connect(g); g.connect(A.master); src.start(t); src.stop(t + dur + 0.05);
   }
-  function updateAudio() {
+  function sub(from, to, gain, dur) {
+    if (!A.ctx) return;
+    const ac = A.ctx, t = ac.currentTime;
+    const o = ac.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(from, t); o.frequency.exponentialRampToValueAtTime(to, t + dur);
+    const g = ac.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g); g.connect(A.master); o.start(t); o.stop(t + dur + 0.05);
+  }
+  const SFX = {
+    thump: (k) => { burstSound('lowpass', 300 + k * 700, 0.7, Math.min(1, 0.3 + k * 0.5), 0.25 + k * 0.45); sub(90, 32, 0.6 * Math.min(1, k + 0.3), 0.35 + k * 0.3); },
+    pop: () => { burstSound('highpass', 1400, 0.7, 0.35, 0.06); sub(140, 60, 0.25, 0.08); },
+    nitro: () => { burstSound('highpass', 300, 0.8, 0.9, 0.7, 4200); sub(70, 40, 0.7, 0.5); },
+    gate: (k) => burstSound('bandpass', 900 + k * 900, 1.4, 0.18 + k * 0.12, 0.16, 300),
+    crowd: (k) => { burstSound('bandpass', 850, 0.4, 0.35 * k, 2.4); burstSound('bandpass', 1900, 0.6, 0.18 * k, 1.8); },
+  };
+  function updateAudio(dt) {
     if (!A.ctx) return;
     const r = G.run, t = A.ctx.currentTime;
-    let eg = 0, ef = 40, wg = 0, wf = 400;
+    let eg = 0, ef = 40, cut = 600, ig = 0, wg = 0, wf = 300, rg = 0, wh = 0;
     if (r && (G.phase === 'run' || G.phase === 'result') && r.mode !== 'wreck') {
-      const sp = SJ.speedOf(r);
-      const revving = !r.landed;
-      ef = (revving ? 55 : 35) + sp * (r.mode === 'air' ? 3.1 : 2.2) + (r.nitro > 0 ? 40 : 0);
-      eg = revving ? 0.16 : 0.05;
-      if (r.mode === 'air') { wg = clamp(sp / 70, 0, 1) * 0.5; wf = 300 + sp * 9; }
+      const sp = SJ.speedOf(r), kmh = sp * 3.6;
+      let rpm;
+      if (r.mode === 'air' && !r.landed) {
+        rpm = 0.97 + Math.sin(G.t * 38) * 0.03; // havada devir sınırında
+      } else {
+        let g = 1; while (g < GEARS.length - 1 && kmh > GEARS[g]) g++;
+        if (g > A.gear && !r.landed) { A.shiftT = 0.14; SFX.pop(); }
+        A.gear = g;
+        const lo = g === 1 ? 0 : GEARS[g - 1] * 0.82;
+        rpm = 0.28 + 0.72 * clamp((kmh - lo) / (GEARS[g] - lo), 0, 1);
+      }
+      if (A.shiftT > 0) { A.shiftT -= dt; rpm *= 0.72; }
+      if (r.landed) rpm = Math.min(rpm, 0.25 + sp / 160);
+      A.rpm += (rpm - A.rpm) * Math.min(1, dt * 18);
+      const load = r.landed ? 0.25 : r.mode === 'air' ? 0.55 : 1;
+      ef = 34 + A.rpm * 170 + (r.nitro ? 14 : 0);
+      cut = 500 + A.rpm * 2600 * load + (r.nitro ? 1200 : 0);
+      eg = (r.landed ? 0.12 : 0.3) + (r.nitro ? 0.1 : 0);
+      ig = 0.05 + A.rpm * 0.1 * load;
+      wf = 250 + sp * 14;
+      wg = clamp(sp / 90, 0, 1) * (r.mode === 'air' ? 0.55 : 0.22);
+      rg = r.nitro ? 0.55 : 0;
+      wh = r.nitro ? 0.035 : 0;
+      A.whistle.frequency.setTargetAtTime(2200 + sp * 14, t, 0.1);
     }
-    if (G.phase === 'ready' || G.phase === 'count') { ef = 48; eg = 0.07; }
-    A.eng.frequency.setTargetAtTime(ef, t, 0.05);
-    A.eng2.frequency.setTargetAtTime(ef * 0.501, t, 0.05);
-    A.engG.gain.setTargetAtTime(eg, t, 0.08);
-    A.windG.gain.setTargetAtTime(wg, t, 0.15);
+    if (G.phase === 'ready' || G.phase === 'count') { ef = 40 + Math.sin(G.t * 9) * 4; eg = 0.18; cut = 900; ig = 0.04; A.gear = 1; }
+    A.o1.frequency.setTargetAtTime(ef, t, 0.03);
+    A.o2.frequency.setTargetAtTime(ef * 0.5, t, 0.03);
+    A.o3.frequency.setTargetAtTime(ef * 2, t, 0.03);
+    A.engF.frequency.setTargetAtTime(cut, t, 0.04);
+    A.engG.gain.setTargetAtTime(eg, t, 0.06);
+    A.intakeF.frequency.setTargetAtTime(700 + A.rpm * 2200, t, 0.05);
+    A.intakeG.gain.setTargetAtTime(ig, t, 0.06);
     A.windF.frequency.setTargetAtTime(wf, t, 0.1);
+    A.windG.gain.setTargetAtTime(wg, t, 0.12);
+    A.roarG.gain.setTargetAtTime(rg, t, 0.08);
+    A.whistleG.gain.setTargetAtTime(wh, t, 0.1);
   }
+  const thump = (k) => SFX.thump(k);
   $('muteBtn').addEventListener('click', (e) => {
     e.stopPropagation();
     A.on = !A.on;
     $('muteBtn').textContent = A.on ? 'Ses: açık' : 'Ses: kapalı';
-    if (A.ctx) A.master.gain.setTargetAtTime(A.on ? 0.55 : 0, A.ctx.currentTime, 0.05);
+    if (A.ctx) A.master.gain.setTargetAtTime(A.on ? 0.8 : 0, A.ctx.currentTime, 0.05);
   });
 
   // ---------- Spiker ----------
@@ -942,9 +1085,9 @@
     initAudio();
     const car = CARS[G.carIdx];
     useCar(G.carIdx);
-    G.wind = Math.round((Math.random() * 5.2 - 2.6) * 10) / 10;
+    G.wind = Math.round((Math.random() * 8 - 4) * 10) / 10;
     G.run = SJ.newRun(car, hill, G.wind);
-    G.evIdx = 0; G.flags = {}; G.slow = 1; G.slowT = 0; G.wheelRot = 0; G.wheelSpin = 0; G.roll = 0; G.rollW = 0; G.acc = 0;
+    G.evIdx = 0; G.flags = {}; G.gateIdx = 0; G.kick = 0; G.kickV = 0; A.gear = 1; G.slow = 1; G.slowT = 0; G.wheelRot = 0; G.wheelSpin = 0; G.roll = 0; G.rollW = 0; G.acc = 0;
     PS.clear(); debris.clear();
     G.toBeat = bestDistance();
     beat.set(G.toBeat);
@@ -1007,7 +1150,14 @@
       const e = r.events[G.evIdx++];
       const car = r.car;
       switch (e.type) {
-        case 'nitro': say(pick(['Nitro açıldı! Motor bağırıyor!', 'Ve nitro! Mavi alev arkada!', 'Nitroya bastı, hız tavan yapıyor!']), 2.2); break;
+        case 'nitro':
+          if (!G.flags.nitroSaid) { G.flags.nitroSaid = true; say(pick(['Nitro açıldı! Motor bağırıyor!', 'Ve nitro! Mavi alev arkada!', 'Nitroya bastı, hız tavan yapıyor!']), 2.2); }
+          G.kickV += 7; G.shake = Math.max(G.shake, 0.35); G.flash = 0.6;
+          SFX.nitro(); buzz(45);
+          break;
+        case 'nitroEnd':
+          if (r.x > hill.cfg.NZ1 - 2 && !G.flags.nitroEnd) { G.flags.nitroEnd = true; say(`Nitro bitti, ${Math.round(r.v * 3.6)} km/sa! Şimdi bırak ve kenarı bekle.`, 2.4); }
+          break;
         case 'bumpAir': if (e.speed > 25 && !G.flags.bumpSaid) { G.flags.bumpSaid = true; say(pick(['Engebede havalandı!', 'Tümsek onu fırlattı, dikkat!', 'Pist engebeli, araba zıplıyor!'])); } break;
         case 'bumpLand':
           burst(r.x, hill.y(r.x) + 0.2, 0, r.v * 0.5, 2, 18, 5, 0.9);
@@ -1021,7 +1171,8 @@
           else if (e.q > 0.5) line = `İyi zamanlama, ${kmh} km/sa ile havada.`;
           else line = `Biraz erken bastı. ${kmh} km/sa ile havalandı.`;
           say(line, 2.6);
-          G.slow = 0.4; G.slowT = 0.55;
+          G.slow = 0.33; G.slowT = 0.7; G.flash = 1; G.kickV -= 5;
+          SFX.crowd(1); buzz([25, 30, 60]);
           const tap = $('meterTap');
           if (r.tapX !== null) { tap.hidden = false; tap.style.left = clamp(100 - (hill.TO - r.tapX) / 120 * 100, 0, 100) + '%'; }
           break;
@@ -1031,7 +1182,8 @@
           const strength = clamp(e.vn / car.crashVn, 0, 1.5);
           burst(r.x, hill.y(r.x) + 0.3, 0, r.vx * 0.5, 3 + e.vn * 0.5, 70, 9, 1.4);
           G.shake = 0.3 + strength * 0.7;
-          thump(strength);
+          thump(strength); buzz(e.crash ? [90, 40, 140] : 50);
+          if (!e.crash) SFX.crowd(0.8);
           if (!e.crash) {
             if (e.diff < 6 && e.vn < 6) say(pick(['Yumuşacık iniş! Hakemler bunu sever.', 'Telemark gibi! Dört teker aynı anda!', 'Kusursuz iniş, tüy gibi!']), 3);
             else if (e.diff < 15) say(pick(['Dengeli bir iniş.', 'Biraz sert ama kontrol onda.']), 3);
@@ -1127,8 +1279,8 @@
     let dist, height, ahead, lookUp, side = 0;
     if (G.phase === 'ready' || G.phase === 'count') { dist = 8.6; height = 3.0; ahead = 18; lookUp = -1.2; }
     else if (r.mode === 'wreck') { dist = 13; height = 6; ahead = 0; lookUp = 0; }
-    else if (r.mode === 'air' && r.jumped && !r.landed) { dist = 10 + sp * 0.02; height = 3.4 + sp * 0.012; ahead = 26; lookUp = -4.5 - (landscape() ? 2 : 0); side = 0.6; }
-    else { dist = 6.8 + sp * 0.03; height = 2.3 + sp * 0.012; ahead = 14 + sp * 0.1; lookUp = landscape() ? -2.2 : -0.6; }
+    else if (r.mode === 'air' && r.jumped && !r.landed) { dist = 8 + G.kick; height = 2.7; ahead = 30; lookUp = -4 - (landscape() ? 2 : 0); side = 0.5; }
+    else { dist = 5.0 + sp * 0.012 + G.kick; height = 1.45 + sp * 0.005; ahead = 18 + sp * 0.15; lookUp = landscape() ? -1.6 : -0.2; }
     return { p, heading, dist, height, ahead, lookUp, side, sp };
   }
   // Kamera arabaya göre bir ofsette durur; ofset yumuşatılır, mutlak konum değil.
@@ -1156,6 +1308,8 @@
     placeCamera(c, 1, 1, 1);
   }
   function updateCamera(dt) {
+    G.kickV += (-30 * G.kick - 7 * G.kickV) * dt;
+    G.kick += G.kickV * dt;
     if (G.phase === 'menu' || !G.run) {
       const a = G.t * 0.22;
       const portrait = camera.aspect < 1;
@@ -1172,8 +1326,9 @@
       const c = cameraTarget(r);
       placeCamera(c, 1 - Math.exp(-dt * 3), 1 - Math.exp(-dt * 5), 1 - Math.exp(-dt * 3.5));
       const kmh = c.sp * 3.6;
-      const targetFov = (camera.aspect < 1 ? 70 : 58) + clamp(kmh - 80, 0, 200) * 0.07 + (r.nitro > 0 ? 4 : 0);
-      G.fov += (targetFov - G.fov) * (1 - Math.exp(-dt * 2.5));
+      G.camK = { kmh, ground: r.mode === 'ground' && !r.landed, nitro: r.nitro > 0 };
+      const targetFov = Math.min(104, (camera.aspect < 1 ? 66 : 56) + clamp(kmh - 60, 0, 300) * 0.085 + (r.nitro > 0 ? 9 : 0));
+      G.fov += (targetFov - G.fov) * (1 - Math.exp(-dt * (r.nitro > 0 ? 5 : 2.5)));
     }
     camera.position.copy(camState.pos);
     if (G.shake > 0) {
@@ -1181,7 +1336,18 @@
       camera.position.x += (Math.random() - 0.5) * s; camera.position.y += (Math.random() - 0.5) * s; camera.position.z += (Math.random() - 0.5) * s;
       G.shake = Math.max(0, G.shake - dt * 1.8);
     }
+    // Hıza bağlı sürekli titreşim: yüksek hızda kamera sarsılır
+    let roll = 0;
+    if (G.run && G.camK && G.phase !== 'menu') {
+      const k = G.camK;
+      const amp = clamp((k.kmh - 90) / 260, 0, 1) * (k.ground ? 0.06 : 0.025) + (k.nitro ? 0.045 : 0);
+      camera.position.x += (Math.sin(G.t * 53) + Math.sin(G.t * 31.7)) * amp * 0.5;
+      camera.position.y += (Math.sin(G.t * 47.3) + Math.sin(G.t * 23.1)) * amp * 0.5;
+      camera.position.z += Math.sin(G.t * 39.9) * amp * 0.5;
+      roll = Math.sin(G.t * 17) * amp * 0.12;
+    }
     camera.lookAt(camState.look);
+    if (roll) camera.rotateZ(roll);
     if (Math.abs(camera.fov - G.fov) > 0.01) { camera.fov = G.fov; camera.updateProjectionMatrix(); }
   }
 
@@ -1212,7 +1378,7 @@
     const on = r.nitro > 0 && r.mode !== 'wreck';
     m.exhausts.forEach((f) => {
       f.visible = on;
-      if (on) { const s = 0.7 + Math.random() * 0.7; f.scale.set(1, s * 1.6, 1); f.position.x = -r.car.len / 2 - 0.08 - s * 0.8; }
+      if (on) { const s = 0.7 + Math.random() * 0.6; f.scale.set(1.25, s * 1.5, 1.25); f.position.x = -r.car.len / 2 - 0.08 - s * 0.75; }
     });
     MAT.tail.emissiveIntensity = r.landed && r.mode === 'ground' && r.t - r.landT > 0.8 ? 5 : 1.6;
   }
@@ -1221,6 +1387,7 @@
   function updateHud(r) {
     const sp = r.mode === 'wreck' ? 0 : SJ.speedOf(r);
     $('hudSpeed').textContent = String(Math.round(sp * 3.6));
+    $('hudSpeed').parentElement.classList.toggle('nitro', r.nitro > 0);
     const dEl = $('hudDist');
     if (r.jumped) {
       const d = r.landed ? Math.round(r.dist * 2) / 2 : hill.arcAt(r.x);
@@ -1228,27 +1395,92 @@
       $('hudDistVal').textContent = d.toFixed(1);
       dEl.classList.toggle('over', G.toBeat !== null && d > G.toBeat);
     }
+    // Rampa göstergesi: start → nitro bölgesi → burun kaldırma bölgesi → kenar
     const meter = $('meter');
-    const toEdge = hill.TO - r.x;
-    if (!r.jumped && toEdge < 120) {
+    const pct = (x) => clamp(x / hill.TO * 100, 0, 100);
+    if (!r.jumped) {
       meter.hidden = false;
-      $('meterZone').style.left = (100 - SJ.ZONE / 120 * 100) + '%';
-      $('meterCar').style.left = clamp(100 - toEdge / 120 * 100, 0, 100) + '%';
-    } else if (r.jumped && r.airT > 0.35) meter.hidden = true;
+      const mn = $('meterNitro');
+      mn.style.left = pct(NZ0) + '%'; mn.style.width = (pct(NZ1) - pct(NZ0)) + '%';
+      mn.classList.toggle('burn', r.nitro > 0);
+      $('meterZone').style.left = pct(hill.TO - SJ.ZONE) + '%';
+      $('meterCar').style.left = pct(r.x) + '%';
+    } else if (r.airT > 0.35) meter.hidden = true;
 
     if (G.phase !== 'run') return;
     if (r.mode === 'wreck' || r.landed) { setPrompt('', false); return; }
+    const toEdge = hill.TO - r.x;
     if (!r.jumped) {
-      if (r.mode === 'air') setPrompt(r.hold ? 'Burnu dengele' : 'Basılı tut: burnu kaldır', false);
-      else if (toEdge <= SJ.ZONE) setPrompt(r.tapX === null ? 'Şimdi zıpla!' : 'Zıplıyor…', r.tapX === null);
-      else if (!r.nitroUsed) setPrompt('Dokun: nitro', false);
-      else if (r.nitro > 0) setPrompt('Nitro!', false);
-      else setPrompt(toEdge < 120 ? 'Kenara hazırlan' : 'Tam gaz', false);
+      if (r.x < NZ0) setPrompt(r.x < NZ0 - 18 ? 'Tam gaz' : 'Nitro geliyor · bas ve tut', r.x >= NZ0 - 18);
+      else if (r.x <= NZ1) setPrompt(r.nitro ? 'NİTRO!' : 'Basılı tut: nitro', !r.nitro);
+      else if (toEdge > SJ.ZONE) setPrompt(r.hold ? 'Bırak!' : 'Bekle… sarı bölgede bas', !!r.hold);
+      else setPrompt(r.tapX === null ? 'Şimdi bas: burnu kaldır!' : 'Burun yukarıda · tut', r.tapX === null);
     } else {
       const gap = r.y - hill.y(r.x);
-      if (r.hold) setPrompt(gap < 6 ? 'Yere paralel ol' : 'Süzülüyor · bırak: in', false);
+      const d = hill.arcAt(r.x);
+      if (r.hold) setPrompt(d > hill.HS - 40 ? 'HS yaklaşıyor · bırak!' : gap < 6 ? 'Yere paralel ol' : 'Süzülüyor · bırak: in', d > hill.HS - 40);
       else setPrompt('Basılı tut: süzül', false);
     }
+  }
+
+  // ---------- Ekran efektleri: hız çizgileri, kenar karartma, nitro parlaması ----------
+  const fx = $('fx');
+  const fctx = fx.getContext('2d');
+  const streaks = [];
+  for (let i = 0; i < 90; i++) streaks.push({ a: Math.random() * Math.PI * 2, r: Math.random(), w: 0.5 + Math.random() * 1.5 });
+  const proj = new T.Vector3();
+  function drawFx(dt) {
+    const w = fx.clientWidth, h = fx.clientHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (fx.width !== Math.round(w * dpr) || fx.height !== Math.round(h * dpr)) { fx.width = Math.round(w * dpr); fx.height = Math.round(h * dpr); }
+    fctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    fctx.clearRect(0, 0, w, h);
+    const r = G.run;
+    if (!r || G.phase === 'menu' || r.mode === 'wreck') { G.flash = 0; return; }
+    const kmh = SJ.speedOf(r) * 3.6;
+    const nitro = r.nitro > 0;
+    // Kaçış noktası: kameranın baktığı nokta
+    proj.copy(camState.look).project(camera);
+    const cx = (proj.x * 0.5 + 0.5) * w, cy = (-proj.y * 0.5 + 0.5) * h;
+    const diag = Math.hypot(w, h) * 0.6;
+    const k = clamp((kmh - 110) / 220, 0, 1);
+    const n = Math.floor(streaks.length * Math.min(1, k + (nitro ? 0.45 : 0)));
+    const speed = 1.6 + k * 4.5 + (nitro ? 3 : 0);
+    fctx.lineCap = 'round';
+    for (let i = 0; i < streaks.length; i++) {
+      const st = streaks[i];
+      st.r += st.r * speed * dt + 0.02 * dt;
+      if (st.r > 1.25) { st.r = 0.32 + Math.random() * 0.2; st.a = Math.random() * Math.PI * 2; }
+      if (i >= n) continue;
+      const r0 = st.r * diag, r1 = r0 * (1 + 0.12 + k * 0.25 + (nitro ? 0.2 : 0));
+      const ca = Math.cos(st.a), sa = Math.sin(st.a);
+      const alpha = clamp((st.r - 0.4) * 1.8, 0, 1) * (0.35 + k * 0.45);
+      fctx.strokeStyle = nitro ? `rgba(160,215,255,${alpha})` : `rgba(255,255,255,${alpha})`;
+      fctx.lineWidth = st.w * (1 + st.r);
+      fctx.beginPath(); fctx.moveTo(cx + ca * r0, cy + sa * r0); fctx.lineTo(cx + ca * r1, cy + sa * r1); fctx.stroke();
+    }
+    // Kenar karartma ve nitro mavisi
+    const vig = 0.18 + k * 0.45 + (nitro ? 0.2 : 0);
+    const grad = fctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.28, cx, cy, diag * 1.1);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, nitro ? `rgba(20,70,160,${vig})` : `rgba(5,12,28,${vig})`);
+    fctx.fillStyle = grad; fctx.fillRect(0, 0, w, h);
+    if (G.flash > 0) {
+      fctx.fillStyle = `rgba(255,255,255,${G.flash * 0.35})`;
+      fctx.fillRect(0, 0, w, h);
+      G.flash = Math.max(0, G.flash - dt * 3);
+    }
+  }
+  // Kapıların altından geçerken ses ve ışık
+  function gatePass(r) {
+    if (r.jumped) return;
+    while (G.gateIdx < GATE_XS.length && r.x > GATE_XS[G.gateIdx]) {
+      G.gateIdx++;
+      SFX.gate(clamp(r.v / 90, 0, 1));
+      if (r.nitro) { G.flash = Math.max(G.flash, 0.18); buzz(12); }
+    }
+    gateLight.emissiveIntensity = 2.4 + (r.nitro ? 1.6 + Math.sin(G.t * 30) * 0.8 : 0);
+    nitroRibbon.material.opacity = r.nitro ? 0.34 : 0.22;
   }
 
   // ---------- Döngü ----------
@@ -1300,6 +1532,7 @@
         const ready = r.done || (r.dnf && r.t - t0 > 2.5) || (r.landed && !r.crashed && r.t - t0 > 2.8) || (r.crashed && r.landed && r.t - t0 > 3.8);
         if (ready) showResult();
       }
+      gatePass(r);
       updateHud(r);
     }
     PS.update(dt);
@@ -1312,9 +1545,10 @@
     const focus = activeCar ? activeCar.group.position : camState.look;
     sun.target.position.copy(focus);
     sun.position.copy(focus).addScaledVector(SUN_DIR, 120);
-    updateAudio();
+    updateAudio(dtReal);
     if (tickerTimer > 0) { tickerTimer -= dtReal; if (tickerTimer <= 0) $('ticker').classList.remove('on'); }
     renderer.render(scene, camera);
+    drawFx(dtReal);
     requestAnimationFrame(frame);
   }
 

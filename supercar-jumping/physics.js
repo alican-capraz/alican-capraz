@@ -4,16 +4,18 @@
   const G = 9.81;
   const RHO = 1.2;
   const DT = 1 / 240;
-  const ZONE = 28;        // kalkış bölgesi: kenardan önceki son 28 m
+  const ZONE = 40;        // burun kaldırma bölgesi: kenardan önceki son 40 m
   const LATE_WINDOW = 0.22;
-  const NITRO_TIME = 2.6;
+  const NITRO_MULT = 2.4;    // nitro açıkken motor gücü çarpanı
+  const NITRO_THRUST = 5.5;  // nitro açıkken ek itiş (m/s²)
+  const WIND_LIFT = 6;       // rüzgârın kaldırma kuvvetine etkisi (önden rüzgâr kaldırmayı artırır)
 
   const CARS = [
     {
       id: 'vento', name: 'Vento R', cls: 'Hiper araba', shape: 'wedge',
       mass: 1150, len: 4.4, h: 1.12, wb: 2.68, wr: 0.34,
-      power: 520e3, cda: 0.62, cla: 1.7, plan: 7.4, crr: 0.014,
-      pitch: 4.4, crashVn: 11,
+      power: 520e3, cda: 0.62, cla: 1.45, plan: 7.4, crr: 0.014,
+      pitch: 4.4, crashVn: 12,
       color: '#c91d25', trim: '#151515',
       desc: 'Hafif ve çevik. Uzun süzülür ama sert inişi affetmez.',
     },
@@ -36,8 +38,8 @@
     {
       id: 'bolt', name: 'Bolt Mini', cls: 'Şehir arabası', shape: 'mini',
       mass: 820, len: 3.35, h: 1.5, wb: 2.12, wr: 0.29,
-      power: 175e3, cda: 0.66, cla: 1.9, plan: 5.2, crr: 0.012,
-      pitch: 5.4, crashVn: 10,
+      power: 175e3, cda: 0.66, cla: 1.75, plan: 5.2, crr: 0.012,
+      pitch: 5.4, crashVn: 11,
       color: '#f1bf2c', trim: '#1d1d1d',
       desc: 'Yavaş ama tüy gibi. Rüzgârı iyi okursan sürpriz yapar.',
     },
@@ -51,16 +53,14 @@
     STEP: 3.5,   // kenardan sonra iniş pistinin başladığı düşüş
     KNOLL: 16,   // iniş pistinin başlangıç eğimi
     LAND: 33,    // iniş pisti eğimi
-    V0: 62,         // pistin tasarlandığı nominal kalkış hızı (m/s)
+    V0: 95,         // pistin tasarlandığı nominal kalkış hızı (m/s)
     NOM_DRAG: 0.00035,
     NOM_LIFT: 0.12,
-    STRAIGHT: 55,   // eğim düzleşmeden önceki düz bölüm
-    FLATTEN: 130,   // düzleşme mesafesi
-    BUMPS: [
-      { c: 70, hgt: 0.5, w: 6.5 },
-      { c: 118, hgt: 0.75, w: 7.0 },
-      { c: 158, hgt: 0.65, w: 6.0 },
-    ],
+    STRAIGHT: 80,   // eğim düzleşmeden önceki düz bölüm
+    FLATTEN: 190,   // düzleşme mesafesi
+    NZ0: 30,     // nitro bölgesi başlangıcı (x)
+    NZ1: 150,    // nitro bölgesi sonu; sonrası kusursuz rampa
+    BUMPS: [],
   };
 
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -71,7 +71,7 @@
   function buildHill(cfg) {
     const dx = 0.25;
     const TO = cfg.TO;
-    const xEnd = TO + 900;
+    const xEnd = TO + 1350;
     const n = Math.ceil(xEnd / dx) + 1;
     const iTO = Math.round(TO / dx);
     const ys = new Float64Array(n);
@@ -177,7 +177,7 @@
     hill.K = Math.round(hill.arcAt(TO + dK) / 5) * 5;
     hill.HS = Math.round(hill.arcAt(TO + dK + cfg.FLATTEN * 0.3) / 5) * 5;
     hill.xFlat = TO + dFlat;
-    hill.mPerPoint = 1.2;
+    hill.mPerPoint = 0.4;
     return hill;
   }
 
@@ -186,7 +186,7 @@
       car, hill, wind, windNow: wind,
       mode: 'ground', t: 0,
       x: 2, y: hill.y(2), v: 0, vx: 0, vy: 0, phi: 0, om: 0,
-      hold: false, nitro: 0, nitroUsed: false,
+      hold: false, nitro: 0, nitroUsed: false, nitroDist: 0,
       tapX: null, late: false, jumped: false, q: null, airT: 0,
       landed: false, landT: 0, dist: null, landDiff: 0, landVn: 0,
       crashed: false, dnf: false, done: false, doneT: 0,
@@ -201,13 +201,8 @@
     r.hold = true;
     if (r.done) return;
     if (r.mode === 'ground' && !r.jumped) {
-      if (r.x >= r.hill.TO - ZONE) {
-        if (r.tapX === null) r.tapX = r.x;
-      } else if (!r.nitroUsed) {
-        r.nitroUsed = true;
-        r.nitro = NITRO_TIME;
-        ev(r, 'nitro');
-      }
+      // Kenara yaklaşırken ilk basış: burun kaldırma ve kalkış zamanlaması
+      if (r.x >= r.hill.TO - ZONE && r.tapX === null) r.tapX = r.x;
     } else if (r.mode === 'air' && r.jumped && r.tapX === null && !r.late && r.airT < LATE_WINDOW) {
       // Geç basış: daha zayıf bir itiş
       r.late = true;
@@ -221,7 +216,7 @@
 
   function applyBoost(r, q) {
     const th = Math.atan(-Math.tan(deg(r.hill.cfg.TABLE)));
-    const boost = 0.6 + 2.6 * q;
+    const boost = 0.6 + 4.2 * q;
     r.vx += -Math.sin(th) * boost;
     r.vy += Math.cos(th) * boost;
     r.om += 0.12 + 0.25 * q;
@@ -253,12 +248,21 @@
     const th = Math.atan(h.slope(r.x));
     const cth = Math.cos(th), sth = Math.sin(th);
     let F = -c.mass * G * sth;
+    const inZone = !r.jumped && r.x >= h.cfg.NZ0 && r.x <= h.cfg.NZ1;
+    const nitroOn = inZone && r.hold;
+    if (nitroOn && !r.nitro) { r.nitroUsed = true; ev(r, 'nitro'); }
+    if (!nitroOn && r.nitro) ev(r, 'nitroEnd');
+    r.nitro = nitroOn ? 1 : 0;
+    if (nitroOn) r.nitroDist += r.v * DT;
     if (!r.landed) {
-      const P = c.power * (r.nitro > 0 ? 1.6 : 1);
-      F += Math.min(P / Math.max(r.v, 4), 1.05 * c.mass * G * cth);
+      const P = c.power * (nitroOn ? NITRO_MULT : 1);
+      F += Math.min(P / Math.max(r.v, 4), 1.05 * c.mass * G * cth * (nitroOn ? 1.6 : 1));
+      if (nitroOn) F += NITRO_THRUST * c.mass;
     }
     const va = r.v - r.windNow * cth;
-    F -= 0.5 * RHO * c.cda * va * Math.abs(va);
+    // Erken kaldırılan burun rampada hava freni gibi çalışır
+    const noseUp = !r.jumped && r.tapX !== null && r.hold ? 2.2 : 1;
+    F -= 0.5 * RHO * c.cda * noseUp * va * Math.abs(va);
     F -= c.crr * c.mass * G * cth * (r.v >= 0 ? 1 : -1);
     if (r.landed && r.t - r.landT > 0.8) F -= 0.85 * c.mass * G * (r.v >= 0 ? 1 : -1);
     r.v += (F / c.mass) * DT;
@@ -300,7 +304,8 @@
     const sa = Math.sin(a);
     const qd = 0.5 * RHO * s * s;
     const D = qd * (c.cda + c.plan * 0.85 * sa * sa);
-    const L = qd * c.cla * Math.sin(2 * a);
+    const sl = Math.max(0, s - WIND_LIFT * r.windNow);
+    const L = 0.5 * RHO * sl * sl * c.cla * Math.sin(2 * a);
     r.vx += ((-D * vax - L * vay) / (s * c.mass)) * DT;
     r.vy += ((-D * vay + L * vax) / (s * c.mass) - G) * DT;
     r.x += r.vx * DT;
@@ -334,8 +339,8 @@
     const vn = -(r.vx * nx + r.vy * ny);
     const vt = r.vx * tx + r.vy * ty;
     const dd = Math.abs(diff) * 180 / Math.PI;
-    const lim = r.jumped ? 1 : 1.25;
-    const crash = dd > 32 * lim || vn > c.crashVn * lim;
+    // Yüksek hızda iniş: süspansiyon toleransı geniş, açı hatası affedilmez
+    const crash = dd > 34 || vn > c.crashVn * 1.7;
 
     if (r.jumped && !r.landed) {
       r.landed = true;
@@ -423,7 +428,7 @@
   function step(r) {
     r.t += DT;
     r.windNow = r.wind + 0.6 * Math.sin(r.t * 0.9) + 0.3 * Math.sin(r.t * 2.3 + 1);
-    if (r.nitro > 0) r.nitro = Math.max(0, r.nitro - DT);
+    if (r.mode !== 'ground') r.nitro = 0;
     if (r.mode === 'ground') groundStep(r);
     else if (r.mode === 'air') airStep(r);
     else wreckStep(r);
@@ -458,7 +463,7 @@
     return { dnf: false, dist, distPts: Math.round(distPts * 10) / 10, judges, dropped: [sorted[0], sorted[4]], stylePts, windPts, total };
   }
 
-  const api = { G, DT, ZONE, LATE_WINDOW, NITRO_TIME, CARS, HILL_CFG, buildHill, newRun, step, press, release, score, speedOf, wrap, clamp, smooth, CONTACT_POINTS };
+  const api = { G, DT, ZONE, LATE_WINDOW, NITRO_MULT, NITRO_THRUST, WIND_LIFT, CARS, HILL_CFG, buildHill, newRun, step, press, release, score, speedOf, wrap, clamp, smooth, CONTACT_POINTS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SJ = api;
 })(typeof window !== 'undefined' ? window : globalThis);
