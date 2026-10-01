@@ -652,7 +652,7 @@
     const P = PROFILES[car.shape];
     const L = car.len, Hh = car.h, Wd = CAR_W[car.id];
     const wr = car.wr, ra = wr * 1.16;
-    const yb = Math.min(0.2 * Hh, wr * 0.75);
+    const yb = wr * 0.95; // sürüş yüksekliği: lastikler gövdenin altından görünsün
     const xr = -car.wb / 2, xf = car.wb / 2;
     // Dış hat: üst profil (arkadan öne), ön alt köşe, sonra çamurluk kemerleriyle alt kenar (önden arkaya)
     const top = chaikin(P.top.map(([u, v]) => [u * L, v * Hh]), 2);
@@ -754,7 +754,7 @@
           const sp = new T.Mesh(new T.BoxGeometry(wr * 1.2, wr * 0.16, 0.02), MAT.black);
           sp.position.z = s * (tireW / 2 + 0.008); sp.rotation.z = (k / 5) * Math.PI; w.add(sp);
         }
-        w.position.set(x, wr, s * (Wd / 2 - tireW / 2 - 0.04));
+        w.position.set(x, wr, s * (Wd / 2 - tireW / 2 + 0.1)); // lastikler gövdeden taşar: arkadan görünür
         g.add(w); wheels.push(w);
       }
     }
@@ -953,8 +953,10 @@
       scene.add(g);
       boards.push({ g, z, color: palette[i % palette.length] });
     }
-    const bank = new T.Mesh(new T.BoxGeometry(7, 3.4, span * 2 + 6), new T.MeshStandardMaterial({ color: lin(0xeef3f9), roughness: 0.95 }));
-    bank.position.set(XB + 3.8, yb + 1.5, 0); bank.receiveShadow = true;
+    // Fizikteki kar setiyle aynı ölçü: üstüne konulabilir, yüksekten üstünden geçilebilir
+    const BH_ = hill.cfg.BANK_H, BWD = hill.cfg.BANK_W;
+    const bank = new T.Mesh(new T.BoxGeometry(BWD, BH_ + 0.2, span * 2 + 6), new T.MeshStandardMaterial({ color: lin(0xeef3f9), roughness: 0.95 }));
+    bank.position.set(XB + BWD / 2, yb + BH_ / 2 - 0.1, 0); bank.receiveShadow = true; bank.castShadow = true;
     scene.add(bank);
     // Uçan pano parçaları
     const N = 60;

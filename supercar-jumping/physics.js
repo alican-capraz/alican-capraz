@@ -61,6 +61,8 @@
     NZ0: 30,     // nitro bölgesi başlangıcı (x)
     NZ1: 150,    // nitro bölgesi sonu; sonrası kusursuz rampa
     BARRIER: 60, // pist sonundaki reklam panosu duvarı: düzlüğün başlangıcından sonra (m)
+    BANK_H: 3.3, // panoların arkasındaki kar setinin yüksekliği
+    BANK_W: 7,   // kar setinin derinliği
     BUMPS: [],
   };
 
@@ -180,6 +182,9 @@
     hill.xFlat = TO + dFlat;
     hill.mPerPoint = 0.4;
     hill.xBarrier = hill.xFlat + cfg.BARRIER;
+    // Kar seti fiziğin bir parçası: üstüne konulabilir, yeterince yüksekten üstünden geçilebilir
+    hill.bank = (x) => (x >= hill.xBarrier && x <= hill.xBarrier + cfg.BANK_W ? cfg.BANK_H : 0);
+    hill.ground = (x) => hill.y(x) + hill.bank(x);
     return hill;
   }
 
@@ -278,7 +283,13 @@
       takeoff(r);
       return;
     }
-    r.y = h.y(r.x);
+    const gy = h.ground(r.x);
+    if (r.landed && gy < r.y - 0.3) {
+      // Kar setinin arkasından boşluğa çıkış
+      r.mode = 'air'; r.vx = r.v * cth; r.vy = r.v * sth; r.airT = 0;
+      return;
+    }
+    r.y = gy;
 
     const k = h.curv(r.x);
     if (k < 0 && r.v * r.v * -k > G * cth) {
@@ -329,7 +340,7 @@
       const wx = r.x + px * cp - py * sp;
       const wy = r.y + px * sp + py * cp;
       if (r.jumped && wx < h.TO + 0.3) continue;
-      if (wy < h.y(wx)) { contact(r); return; }
+      if (wy < h.ground(wx)) { contact(r); return; }
     }
   }
 
@@ -380,7 +391,7 @@
     } else {
       r.mode = 'ground';
       r.v = Math.max(0, vt * (1 - 0.35 * dd / 32) - 0.05 * Math.max(0, vn));
-      r.y = h.y(r.x);
+      r.y = h.ground(r.x);
       r.phi = th;
       r.om = 0;
     }
@@ -398,7 +409,7 @@
     r.y += r.vy * DT;
     r.phi = wrap(r.phi + r.om * DT);
     const rest = c.h * 0.5;
-    const gy = h.y(r.x) + rest;
+    const gy = h.ground(r.x) + rest;
     if (r.y < gy) {
       const th = Math.atan(h.slope(r.x));
       const nx = -Math.sin(th), ny = Math.cos(th);
@@ -409,9 +420,10 @@
       if (vn < 0) {
         const hit = -vn;
         // Takla atan araba her vuruşta seker; dönüş hızı yukarı fırlatır
-        vn = hit * 0.4 + Math.min(6, Math.abs(r.om) * 0.35);
-        vt *= 0.96;
-        r.om = r.om * 0.8 + (hit > 2 ? (Math.random() - 0.5) * hit * 0.7 : 0);
+        vn = hit * 0.4 + Math.min(3, Math.abs(r.om) * 0.2);
+        // Sürtünme darbesi: her vuruş yatay hızı vuruşun şiddetiyle orantılı keser
+        vt -= Math.sign(vt) * Math.min(Math.abs(vt), 0.5 * (hit + vn));
+        r.om = r.om * 0.6 + (hit > 2 ? (Math.random() - 0.5) * hit * 0.7 : 0);
         if (hit > 3) {
           const cost = energyTL(c.mass, hit);
           r.damage += cost;
@@ -450,7 +462,7 @@
     r.wallSpeed = Math.abs(sp);
     const wallCost = energyTL(c.mass, sp);
     r.damage += wallCost;
-    r.vx = -Math.abs(vfx) * 0.06;
+    r.vx = -Math.abs(vfx) * 0.03;
     r.vy = 3 + Math.abs(sp) * 0.09;
     r.om = -(4 + Math.abs(sp) * 0.07);
     r.wreckT = 0;
@@ -472,10 +484,16 @@
     else if (r.mode === 'air') airStep(r);
     else wreckStep(r);
     const xb = r.hill.xBarrier;
-    if (!r.wallHit) {
+    const top = r.hill.y(xb) + r.hill.cfg.BANK_H;
+    const bottom = r.mode === 'wreck' ? r.y - r.car.h / 2 : r.y;
+    if (r.x < xb && bottom < top - 0.2) {
+      // Setin önündeyken ve üst kenarının altındayken duvar katıdır
       const front = r.mode === 'wreck' ? r.x + r.car.len / 2 : r.x + Math.cos(r.phi) * r.car.len / 2;
-      if (front >= xb) hitWall(r);
-    } else if (r.x > xb - 0.6) { r.x = xb - 0.6; r.vx = -Math.abs(r.vx) * 0.3; }
+      if (front >= xb) {
+        if (!r.wallHit) hitWall(r);
+        else if (r.vx > 0) { r.x = xb - r.car.len / 2; r.vx = -Math.abs(r.vx) * 0.3; }
+      }
+    }
     if (r.t > 45) finish(r);
     const sp = r.mode === 'wreck' ? 0 : speedOf(r);
     if (!r.jumped) r.maxSpeed = Math.max(r.maxSpeed, sp);
