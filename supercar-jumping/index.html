@@ -1,0 +1,359 @@
+<title>Supercar Jumping</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600&display=swap">
+<style>
+  /* Yayın grafiği gibi: karlı tepe tam ekran, üstünde TV alt bant panelleri. Tek tema (kış yayını). */
+  :root {
+    --ink: #0d1b33;
+    --ink-2: #1b3054;
+    --paper: #f5f8fb;
+    --snow: #dbe6f0;
+    --muted: #61758f;
+    --red: #e1342a;
+    --gold: #f5b700;
+    --go: #29cc63;
+    --display: "Saira Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: light;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    background: var(--ink);
+    color: var(--ink);
+    font-family: var(--body);
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: fixed; inset: 0; touch-action: none; }
+  #cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  button { font: inherit; cursor: pointer; }
+  button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+  /* ---------- HUD ---------- */
+  #hud {
+    position: absolute; inset: 0; pointer-events: none;
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px calc(env(safe-area-inset-bottom, 0px) + 14px);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto 1fr auto;
+    gap: 10px;
+  }
+  .bug { grid-column: 1; grid-row: 1; display: grid; gap: 0; justify-self: start; min-width: 0; }
+  .bug-top {
+    display: flex; align-items: stretch; gap: 0;
+    font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+  }
+  .live { background: var(--red); color: var(--paper); padding: 3px 8px; }
+  .bug-hill { background: var(--paper); color: var(--ink); padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .bug-main {
+    display: flex; align-items: baseline; gap: 14px;
+    background: var(--ink); color: var(--paper);
+    padding: 4px 12px 6px;
+    font-family: var(--display);
+    clip-path: polygon(0 0, 100% 0, calc(100% - 12px) 100%, 0 100%);
+  }
+  .bug-car { font-weight: 700; font-size: 16px; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+  .speed { font-weight: 800; font-size: 30px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .speed small { font-size: 12px; font-weight: 600; margin-left: 3px; opacity: .7; letter-spacing: .06em; }
+  .bug-dist {
+    justify-self: start;
+    background: var(--gold); color: var(--ink);
+    font-family: var(--display); font-weight: 800; font-size: 26px; line-height: 1;
+    padding: 4px 16px 5px 12px;
+    font-variant-numeric: tabular-nums;
+    clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+  }
+  .bug-dist small { font-size: 13px; font-weight: 700; margin-left: 2px; }
+  .bug-dist.over { background: var(--go); }
+
+  .side { grid-column: 2; grid-row: 1; display: grid; gap: 6px; justify-items: end; align-content: start; }
+  .wind {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(13, 27, 51, .86); color: var(--paper);
+    padding: 5px 10px;
+    font-family: var(--display); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums;
+  }
+  .wind-label { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; opacity: .7; }
+  .wind svg { width: 26px; height: 14px; }
+  .wind.head { box-shadow: inset 4px 0 0 var(--go); }
+  .wind.tail { box-shadow: inset 4px 0 0 var(--red); }
+  .tobeat {
+    background: var(--go); color: var(--ink);
+    font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .05em; text-transform: uppercase;
+    padding: 3px 9px;
+  }
+  #muteBtn {
+    pointer-events: auto;
+    background: rgba(13, 27, 51, .7); color: var(--paper); border: 0;
+    font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    padding: 6px 10px; min-height: 30px;
+  }
+
+  .bottom { grid-column: 1 / -1; grid-row: 3; display: grid; gap: 10px; justify-items: center; }
+  .ticker {
+    justify-self: stretch;
+    max-width: 640px; width: 100%; margin-inline: auto;
+    display: flex; align-items: stretch;
+    font-family: var(--body); font-size: 15px; font-weight: 500;
+    min-height: 34px;
+    opacity: 0; transform: translateY(6px);
+    transition: opacity .25s, transform .25s;
+  }
+  .ticker.on { opacity: 1; transform: none; }
+  .ticker-tag {
+    background: var(--red); color: var(--paper);
+    font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+    display: grid; place-items: center; padding: 0 10px; flex: none;
+  }
+  .ticker-text { background: var(--paper); color: var(--ink); padding: 7px 12px; flex: 1; min-width: 0; }
+  .prompt {
+    font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--paper);
+    text-shadow: 0 2px 0 rgba(13, 27, 51, .55), 0 0 18px rgba(13, 27, 51, .45);
+    text-align: center;
+  }
+  .prompt.hot { color: var(--gold); animation: pulse .32s ease-in-out infinite alternate; }
+  @keyframes pulse { to { transform: scale(1.08); } }
+
+  .meter { width: min(420px, 100%); display: grid; gap: 4px; }
+  .meter-track {
+    position: relative; height: 12px; background: rgba(13, 27, 51, .55);
+    border: 1px solid rgba(245, 248, 251, .6);
+  }
+  .meter-zone { position: absolute; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(245, 183, 0, .25), var(--gold)); }
+  .meter-car { position: absolute; top: -4px; bottom: -4px; width: 4px; margin-left: -2px; background: var(--paper); }
+  .meter-tap { position: absolute; top: -6px; bottom: -6px; width: 3px; margin-left: -1px; background: var(--go); }
+  .meter-labels {
+    display: flex; justify-content: space-between;
+    font-family: var(--display); font-weight: 600; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--paper); text-shadow: 0 1px 2px rgba(13, 27, 51, .8);
+  }
+
+  .lights {
+    position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%);
+    display: flex; gap: 10px; padding: 10px 14px; background: var(--ink);
+  }
+  .lights i { width: 26px; height: 26px; border-radius: 50%; background: #2a3d5e; display: block; }
+  .lights i.r { background: var(--red); box-shadow: 0 0 14px var(--red); }
+  .lights i.g { background: var(--go); box-shadow: 0 0 14px var(--go); }
+
+  /* ---------- Overlays ---------- */
+  .overlay {
+    position: absolute; inset: 0;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 24px);
+    background: linear-gradient(180deg, rgba(13, 27, 51, .78), rgba(13, 27, 51, .55) 50%, rgba(13, 27, 51, .85));
+    touch-action: pan-y;
+  }
+  .menu-inner { max-width: 760px; margin: 0 auto; display: grid; gap: 20px; }
+  .eyebrow {
+    display: flex; flex-wrap: wrap; gap: 0; align-items: stretch;
+    font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .12em; text-transform: uppercase;
+  }
+  .eyebrow span { padding: 3px 9px; }
+  .eyebrow .e1 { background: var(--red); color: var(--paper); }
+  .eyebrow .e2 { background: var(--paper); color: var(--ink); }
+  h1 {
+    margin: 0;
+    font-family: var(--display); font-weight: 800; font-style: italic;
+    font-size: clamp(48px, 13vw, 104px); line-height: .82; letter-spacing: -.01em; text-transform: uppercase;
+    color: var(--paper);
+    text-wrap: balance;
+  }
+  h1 em { font-style: italic; color: var(--gold); }
+  .lede { margin: 0; color: var(--snow); font-size: 16px; line-height: 1.45; max-width: 58ch; }
+
+  .section-label {
+    font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--snow); margin: 0 0 8px;
+  }
+  .cars { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  @media (min-width: 720px) { .cars { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .car {
+    display: grid; gap: 6px; align-content: start; text-align: left;
+    background: var(--paper); color: var(--ink);
+    border: 0; padding: 10px 10px 12px;
+    position: relative;
+    box-shadow: inset 0 -4px 0 transparent;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .car[aria-pressed="true"] { box-shadow: inset 0 -4px 0 var(--red), 0 0 0 3px var(--gold); transform: translateY(-2px); }
+  .car canvas { width: 100%; height: 64px; display: block; }
+  .car-cls { font-family: var(--display); font-weight: 600; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .car-name { font-family: var(--display); font-weight: 800; font-size: 22px; line-height: 1; text-transform: uppercase; }
+  .car-desc { font-size: 13px; line-height: 1.35; color: var(--ink-2); min-height: 3.6em; }
+  .stats { display: grid; gap: 3px; margin-top: 2px; }
+  .stat { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
+  .bar { height: 5px; background: var(--snow); position: relative; }
+  .bar b { position: absolute; inset: 0 auto 0 0; background: var(--ink); }
+  .car-pb { font-family: var(--display); font-weight: 700; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  .howto { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 560px) { .howto { grid-template-columns: 1fr; } }
+  .step { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; color: var(--paper); }
+  .step-n {
+    font-family: var(--display); font-weight: 800; font-size: 30px; line-height: .9; color: var(--gold);
+    font-variant-numeric: tabular-nums;
+  }
+  .step b { font-family: var(--display); font-weight: 700; font-size: 17px; letter-spacing: .03em; text-transform: uppercase; display: block; }
+  .step span { font-size: 14px; line-height: 1.4; color: var(--snow); }
+
+  .go {
+    justify-self: start;
+    background: var(--gold); color: var(--ink); border: 0;
+    font-family: var(--display); font-weight: 800; font-size: 24px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 12px 28px 13px 22px;
+    clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
+  }
+  .go:active { transform: translateY(1px); }
+  .ghost {
+    background: transparent; color: var(--paper); border: 2px solid rgba(245, 248, 251, .7);
+    font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 9px 18px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .fineprint { color: var(--snow); opacity: .75; font-size: 12px; margin: 0; }
+
+  /* ---------- Sonuç ---------- */
+  #result { display: grid; align-content: end; background: linear-gradient(180deg, rgba(13, 27, 51, 0) 20%, rgba(13, 27, 51, .82)); }
+  .res { max-width: 640px; width: 100%; margin: 0 auto; display: grid; gap: 0; animation: slidein .35s ease-out; }
+  @keyframes slidein { from { transform: translateY(24px); opacity: 0; } }
+  .res-head { display: flex; align-items: stretch; flex-wrap: wrap; }
+  .res-head span { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; padding: 4px 10px; }
+  .res-tag { background: var(--red); color: var(--paper); }
+  .res-tag.rec { background: var(--gold); color: var(--ink); }
+  .res-who { background: var(--paper); color: var(--ink); }
+  .res-main {
+    background: var(--ink); color: var(--paper);
+    display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: end;
+    padding: 12px 16px 14px;
+  }
+  .res-dist { font-family: var(--display); font-weight: 800; font-style: italic; font-size: clamp(54px, 15vw, 84px); line-height: .85; font-variant-numeric: tabular-nums; }
+  .res-dist small { font-size: .4em; font-style: normal; margin-left: 4px; }
+  .res-total { text-align: right; font-family: var(--display); }
+  .res-total small { display: block; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; opacity: .7; font-weight: 600; }
+  .res-total b { font-size: 38px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--gold); }
+  .res-note { grid-column: 1 / -1; color: var(--snow); font-size: 14px; }
+  .res-table { background: var(--paper); color: var(--ink); padding: 10px 16px 12px; display: grid; gap: 8px; }
+  .judges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .judges .jl { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+  .judge { font-family: var(--display); font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; background: var(--snow); padding: 2px 8px; min-width: 46px; text-align: center; }
+  .judge.drop { text-decoration: line-through; color: var(--muted); background: transparent; }
+  .pts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .pt { display: grid; }
+  .pt small { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .pt b { font-family: var(--display); font-weight: 800; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .res-actions { padding: 12px 0 0; }
+
+  .board { display: grid; gap: 0; background: var(--paper); }
+  .board-row {
+    display: grid; grid-template-columns: 28px 1fr auto auto; gap: 10px; align-items: center;
+    padding: 6px 10px; font-size: 14px; border-bottom: 1px solid var(--snow);
+    font-variant-numeric: tabular-nums;
+  }
+  .board-row:last-child { border-bottom: 0; }
+  .board-row .rk { font-family: var(--display); font-weight: 800; font-size: 18px; color: var(--muted); }
+  .board-row .nm { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .board-row .ds { font-family: var(--display); font-weight: 700; font-size: 17px; }
+  .board-row .tt { font-family: var(--display); font-weight: 700; font-size: 17px; color: var(--ink-2); min-width: 52px; text-align: right; }
+  .board-empty { padding: 10px; font-size: 14px; color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .prompt.hot { animation: none; }
+    .res { animation: none; }
+    .ticker { transition: none; }
+  }
+  @media (max-width: 480px) {
+    .wind-label { display: none; }
+    .wind { font-size: 13px; padding: 5px 8px; gap: 6px; }
+    .bug-main { gap: 10px; padding-right: 18px; }
+    .bug-car { font-size: 14px; }
+    .speed { font-size: 26px; }
+    .judge { font-size: 16px; min-width: 40px; padding: 2px 6px; }
+    .stat { grid-template-columns: 84px 1fr; font-size: 10px; }
+  }
+  @media (max-height: 520px) and (orientation: landscape) {
+    .speed { font-size: 24px; }
+    .prompt { font-size: 18px; }
+  }
+</style>
+
+<div id="app">
+  <canvas id="cv" aria-label="Oyun alanı"></canvas>
+
+  <div id="hud" hidden>
+    <div class="bug">
+      <div class="bug-top"><span class="live">Canlı</span><span class="bug-hill" id="hudHill">Kartal Tepe</span></div>
+      <div class="bug-main">
+        <span class="bug-car" id="hudCar">Vento R</span>
+        <span class="speed"><b id="hudSpeed">0</b><small>km/sa</small></span>
+      </div>
+      <div class="bug-dist" id="hudDist" hidden><b id="hudDistVal">0.0</b><small>m</small></div>
+    </div>
+    <div class="side">
+      <div class="wind" id="hudWind">
+        <span class="wind-label">Rüzgâr</span>
+        <svg viewBox="0 0 26 14" aria-hidden="true"><path id="windArrow" d="M2 7h18M14 2l6 5-6 5" fill="none" stroke="currentColor" stroke-width="2.4"/></svg>
+        <span id="windVal">0.0 m/s</span>
+      </div>
+      <div class="tobeat" id="hudBeat" hidden></div>
+      <button id="muteBtn" type="button">Ses: açık</button>
+    </div>
+    <div class="bottom">
+      <div class="meter" id="meter" hidden>
+        <div class="meter-track">
+          <div class="meter-zone" id="meterZone"></div>
+          <div class="meter-tap" id="meterTap" hidden></div>
+          <div class="meter-car" id="meterCar"></div>
+        </div>
+        <div class="meter-labels"><span>Kenara 120 m</span><span>Zıplama bölgesi · Kenar</span></div>
+      </div>
+      <div class="prompt" id="prompt"></div>
+      <div class="ticker" id="ticker"><span class="ticker-tag">Spiker</span><span class="ticker-text" id="tickerText"></span></div>
+    </div>
+    <div class="lights" id="lights" hidden><i></i><i></i><i></i></div>
+  </div>
+
+  <section id="menu" class="overlay" aria-label="Araba seçimi">
+    <div class="menu-inner">
+      <div class="eyebrow"><span class="e1">Dünya Kupası</span><span class="e2" id="menuHill">Kartal Tepe</span></div>
+      <h1>Supercar <em>Jumping</em></h1>
+      <p class="lede">Kayakla atlama kulesi, ama atlayan süper araba. Rampadan son gaz in, engebeleri aş, kenarda zıpla ve olabildiğince uzağa süzül. Ağır araba rüzgâra aldırmaz, hafif araba uçar ama sert inişte dağılır.</p>
+
+      <div>
+        <p class="section-label">Arabanı seç</p>
+        <div class="cars" id="cars"></div>
+      </div>
+
+      <div>
+        <p class="section-label">Nasıl oynanır</p>
+        <div class="howto">
+          <div class="step"><span class="step-n">1</span><div><b>İnişte dokun</b><span>Bir kez nitro yakar. Zamanlamayı sen seç; nitro 2,6 saniye sürer.</span></div></div>
+          <div class="step"><span class="step-n">2</span><div><b>Kenarda zıpla</b><span>Sarı bölgede dokun. Kenara ne kadar yakın basarsan itiş o kadar güçlü olur.</span></div></div>
+          <div class="step"><span class="step-n">3</span><div><b>Basılı tut, süzül</b><span>Basılı tutunca burun kalkar, araba süzülür. Bırakınca burun düşer. Yokuşa paralel in.</span></div></div>
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="go" id="goBtn" type="button">Start kapısına geç</button>
+      </div>
+
+      <div>
+        <p class="section-label">Bu cihazdaki en iyiler</p>
+        <div class="board" id="board"></div>
+      </div>
+      <p class="fineprint">Prototip · Araçlar ve tepe hayal ürünüdür. Masaüstünde boşluk tuşu da çalışır.</p>
+    </div>
+  </section>
+
+  <section id="result" class="overlay" hidden aria-label="Sonuç">
+    <div class="res" id="resBox"></div>
+  </section>
+</div>
+
+<script src="physics.js"></script>
+<script src="game.js"></script>
