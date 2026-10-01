@@ -14,7 +14,7 @@
       mass: 1150, len: 4.4, h: 1.12, wb: 2.68, wr: 0.34,
       power: 520e3, cda: 0.62, cla: 1.7, plan: 7.4, crr: 0.014,
       pitch: 4.4, crashVn: 11,
-      color: '#e2432f', trim: '#151515',
+      color: '#c91d25', trim: '#151515',
       desc: 'Hafif ve çevik. Uzun süzülür ama sert inişi affetmez.',
     },
     {

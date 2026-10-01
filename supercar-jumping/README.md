@@ -3,7 +3,7 @@
 Kayakla atlama, ama atlayan süper araba. Rampadan son gaz in, engebeleri aş, kenarda zıpla, olabildiğince uzağa süzül.
 
 - `physics.js`: DOM'dan bağımsız fizik ve puanlama (Node'da da çalışır, ayarlama simülasyonları için)
-- `game.js`: çizim, kamera, arayüz, spiker ve ses
+- `game.js`: Three.js ile 3D sahne (arazi, ağaçlar, seyirci, araba modelleri), arkadan takip kamerası, arayüz, spiker ve ses
 - `index.html`: arayüz ve stiller
 
 ## Oynanış

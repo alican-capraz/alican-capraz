@@ -3,25 +3,27 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600&display=swap">
 <style>
-  /* Yayın grafiği gibi: karlı tepe tam ekran, üstünde TV alt bant panelleri. Tek tema (kış yayını). */
+  /* Tam ekran 3D sahne; üstünde TV yayını grafikleri. Tek tema (kış yayını). */
   :root {
-    --ink: #0d1b33;
-    --ink-2: #1b3054;
+    --ink: #0b1730;
+    --ink-2: #1b2d4f;
+    --glass: rgba(9, 18, 38, .78);
     --paper: #f5f8fb;
-    --snow: #dbe6f0;
-    --muted: #61758f;
+    --snow: #d6e2ee;
+    --muted: #8193ab;
     --red: #e1342a;
     --gold: #f5b700;
     --go: #29cc63;
     --display: "Saira Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
     --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
-    color-scheme: light;
+    color-scheme: dark;
   }
   [hidden] { display: none !important; }
+  *, *::before, *::after { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     background: var(--ink);
-    color: var(--ink);
+    color: var(--paper);
     font-family: var(--body);
     overflow: hidden;
     -webkit-user-select: none;
@@ -31,7 +33,7 @@
   #app { position: fixed; inset: 0; touch-action: none; }
   #cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   button { font: inherit; cursor: pointer; }
-  button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  button:focus-visible, summary:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
 
   /* ---------- HUD ---------- */
   #hud {
@@ -42,17 +44,14 @@
     grid-template-rows: auto 1fr auto;
     gap: 10px;
   }
-  .bug { grid-column: 1; grid-row: 1; display: grid; gap: 0; justify-self: start; min-width: 0; }
-  .bug-top {
-    display: flex; align-items: stretch; gap: 0;
-    font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
-  }
+  .bug { grid-column: 1; grid-row: 1; display: grid; justify-self: start; min-width: 0; }
+  .bug-top { display: flex; align-items: stretch; font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; min-width: 0; }
   .live { background: var(--red); color: var(--paper); padding: 3px 8px; }
   .bug-hill { background: var(--paper); color: var(--ink); padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .bug-main {
     display: flex; align-items: baseline; gap: 14px;
     background: var(--ink); color: var(--paper);
-    padding: 4px 12px 6px;
+    padding: 4px 22px 6px 12px;
     font-family: var(--display);
     clip-path: polygon(0 0, 100% 0, calc(100% - 12px) 100%, 0 100%);
   }
@@ -73,7 +72,7 @@
   .side { grid-column: 2; grid-row: 1; display: grid; gap: 6px; justify-items: end; align-content: start; }
   .wind {
     display: flex; align-items: center; gap: 8px;
-    background: rgba(13, 27, 51, .86); color: var(--paper);
+    background: var(--glass); color: var(--paper);
     padding: 5px 10px;
     font-family: var(--display); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums;
   }
@@ -81,157 +80,126 @@
   .wind svg { width: 26px; height: 14px; }
   .wind.head { box-shadow: inset 4px 0 0 var(--go); }
   .wind.tail { box-shadow: inset 4px 0 0 var(--red); }
-  .tobeat {
-    background: var(--go); color: var(--ink);
-    font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .05em; text-transform: uppercase;
-    padding: 3px 9px;
-  }
-  #muteBtn {
+  .tobeat { background: var(--go); color: var(--ink); font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .05em; text-transform: uppercase; padding: 3px 9px; }
+  .chip-btn {
     pointer-events: auto;
-    background: rgba(13, 27, 51, .7); color: var(--paper); border: 0;
+    background: var(--glass); color: var(--paper); border: 0;
     font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
     padding: 6px 10px; min-height: 30px;
   }
 
   .bottom { grid-column: 1 / -1; grid-row: 3; display: grid; gap: 10px; justify-items: center; }
   .ticker {
-    justify-self: stretch;
     max-width: 640px; width: 100%; margin-inline: auto;
     display: flex; align-items: stretch;
-    font-family: var(--body); font-size: 15px; font-weight: 500;
-    min-height: 34px;
-    opacity: 0; transform: translateY(6px);
-    transition: opacity .25s, transform .25s;
+    font-size: 15px; font-weight: 500; min-height: 34px;
+    opacity: 0; transform: translateY(6px); transition: opacity .25s, transform .25s;
   }
   .ticker.on { opacity: 1; transform: none; }
-  .ticker-tag {
-    background: var(--red); color: var(--paper);
-    font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
-    display: grid; place-items: center; padding: 0 10px; flex: none;
-  }
+  .ticker-tag { background: var(--red); color: var(--paper); font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; display: grid; place-items: center; padding: 0 10px; flex: none; }
   .ticker-text { background: var(--paper); color: var(--ink); padding: 7px 12px; flex: 1; min-width: 0; }
   .prompt {
     font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--paper);
-    text-shadow: 0 2px 0 rgba(13, 27, 51, .55), 0 0 18px rgba(13, 27, 51, .45);
-    text-align: center;
+    color: var(--paper); text-align: center;
+    text-shadow: 0 2px 0 rgba(11, 23, 48, .55), 0 0 18px rgba(11, 23, 48, .55);
   }
   .prompt.hot { color: var(--gold); animation: pulse .32s ease-in-out infinite alternate; }
   @keyframes pulse { to { transform: scale(1.08); } }
 
   .meter { width: min(420px, 100%); display: grid; gap: 4px; }
-  .meter-track {
-    position: relative; height: 12px; background: rgba(13, 27, 51, .55);
-    border: 1px solid rgba(245, 248, 251, .6);
-  }
-  .meter-zone { position: absolute; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(245, 183, 0, .25), var(--gold)); }
+  .meter-track { position: relative; height: 12px; background: rgba(11, 23, 48, .6); border: 1px solid rgba(245, 248, 251, .6); }
+  .meter-zone { position: absolute; top: 0; bottom: 0; right: 0; background: linear-gradient(90deg, rgba(245, 183, 0, .25), var(--gold)); }
   .meter-car { position: absolute; top: -4px; bottom: -4px; width: 4px; margin-left: -2px; background: var(--paper); }
   .meter-tap { position: absolute; top: -6px; bottom: -6px; width: 3px; margin-left: -1px; background: var(--go); }
-  .meter-labels {
-    display: flex; justify-content: space-between;
-    font-family: var(--display); font-weight: 600; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
-    color: var(--paper); text-shadow: 0 1px 2px rgba(13, 27, 51, .8);
-  }
+  .meter-labels { display: flex; justify-content: space-between; font-family: var(--display); font-weight: 600; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--paper); text-shadow: 0 1px 2px rgba(11, 23, 48, .8); }
 
-  .lights {
-    position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%);
-    display: flex; gap: 10px; padding: 10px 14px; background: var(--ink);
-  }
+  .lights { position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%); display: flex; gap: 10px; padding: 10px 14px; background: var(--ink); }
   .lights i { width: 26px; height: 26px; border-radius: 50%; background: #2a3d5e; display: block; }
   .lights i.r { background: var(--red); box-shadow: 0 0 14px var(--red); }
   .lights i.g { background: var(--go); box-shadow: 0 0 14px var(--go); }
 
-  /* ---------- Overlays ---------- */
-  .overlay {
-    position: absolute; inset: 0;
-    overflow-y: auto; -webkit-overflow-scrolling: touch;
-    padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 24px);
-    background: linear-gradient(180deg, rgba(13, 27, 51, .78), rgba(13, 27, 51, .55) 50%, rgba(13, 27, 51, .85));
-    touch-action: pan-y;
+  /* ---------- Garaj (menü) ---------- */
+  #menu {
+    position: absolute; inset: 0; pointer-events: none;
+    display: grid; grid-template-rows: auto 1fr auto; grid-template-columns: minmax(0, 1fr);
+    padding: calc(env(safe-area-inset-top, 0px) + 18px) 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+    background: linear-gradient(180deg, rgba(11, 23, 48, .55), rgba(11, 23, 48, 0) 28%, rgba(11, 23, 48, 0) 55%, rgba(11, 23, 48, .6));
   }
-  .menu-inner { max-width: 760px; margin: 0 auto; display: grid; gap: 20px; }
-  .eyebrow {
-    display: flex; flex-wrap: wrap; gap: 0; align-items: stretch;
-    font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .12em; text-transform: uppercase;
-  }
+  #menu > * { pointer-events: auto; }
+  .brand { display: grid; gap: 8px; justify-items: start; align-content: start; }
+  .eyebrow { display: flex; flex-wrap: wrap; font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
   .eyebrow span { padding: 3px 9px; }
   .eyebrow .e1 { background: var(--red); color: var(--paper); }
   .eyebrow .e2 { background: var(--paper); color: var(--ink); }
   h1 {
     margin: 0;
     font-family: var(--display); font-weight: 800; font-style: italic;
-    font-size: clamp(48px, 13vw, 104px); line-height: .82; letter-spacing: -.01em; text-transform: uppercase;
-    color: var(--paper);
+    font-size: clamp(44px, 11vw, 92px); line-height: .82; letter-spacing: -.01em; text-transform: uppercase;
+    color: var(--paper); text-shadow: 0 4px 30px rgba(11, 23, 48, .45);
     text-wrap: balance;
   }
-  h1 em { font-style: italic; color: var(--gold); }
-  .lede { margin: 0; color: var(--snow); font-size: 16px; line-height: 1.45; max-width: 58ch; }
+  h1 em { color: var(--gold); }
+  .leader { font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: .06em; text-transform: uppercase; background: var(--go); color: var(--ink); padding: 3px 10px; }
 
-  .section-label {
-    font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .14em; text-transform: uppercase;
-    color: var(--snow); margin: 0 0 8px;
+  .garage {
+    grid-row: 3; justify-self: start; align-self: end;
+    width: min(440px, 100%);
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border-top: 3px solid var(--gold);
+    padding: 14px 16px 16px;
+    display: grid; gap: 12px;
   }
-  .cars { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  @media (min-width: 720px) { .cars { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  .car {
-    display: grid; gap: 6px; align-content: start; text-align: left;
-    background: var(--paper); color: var(--ink);
-    border: 0; padding: 10px 10px 12px;
-    position: relative;
-    box-shadow: inset 0 -4px 0 transparent;
-    transition: transform .15s, box-shadow .15s;
+  .garage-top { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; }
+  .nav {
+    width: 44px; height: 44px; border: 2px solid rgba(245, 248, 251, .5); background: transparent; color: var(--paper);
+    font-family: var(--display); font-weight: 700; font-size: 26px; line-height: 1; display: grid; place-items: center;
   }
-  .car[aria-pressed="true"] { box-shadow: inset 0 -4px 0 var(--red), 0 0 0 3px var(--gold); transform: translateY(-2px); }
-  .car canvas { width: 100%; height: 64px; display: block; }
-  .car-cls { font-family: var(--display); font-weight: 600; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
-  .car-name { font-family: var(--display); font-weight: 800; font-size: 22px; line-height: 1; text-transform: uppercase; }
-  .car-desc { font-size: 13px; line-height: 1.35; color: var(--ink-2); min-height: 3.6em; }
-  .stats { display: grid; gap: 3px; margin-top: 2px; }
-  .stat { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
-  .bar { height: 5px; background: var(--snow); position: relative; }
-  .bar b { position: absolute; inset: 0 auto 0 0; background: var(--ink); }
-  .car-pb { font-family: var(--display); font-weight: 700; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-
-  .howto { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-  @media (max-width: 560px) { .howto { grid-template-columns: 1fr; } }
-  .step { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; color: var(--paper); }
-  .step-n {
-    font-family: var(--display); font-weight: 800; font-size: 30px; line-height: .9; color: var(--gold);
-    font-variant-numeric: tabular-nums;
-  }
-  .step b { font-family: var(--display); font-weight: 700; font-size: 17px; letter-spacing: .03em; text-transform: uppercase; display: block; }
-  .step span { font-size: 14px; line-height: 1.4; color: var(--snow); }
-
+  .nav:active { background: rgba(245, 248, 251, .12); }
+  .garage-name { display: grid; text-align: center; min-width: 0; }
+  .car-cls { font-family: var(--display); font-weight: 600; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); }
+  .car-name { font-family: var(--display); font-weight: 800; font-style: italic; font-size: 34px; line-height: 1; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dots { display: flex; gap: 6px; justify-content: center; margin-top: 6px; }
+  .dots i { width: 18px; height: 3px; background: rgba(245, 248, 251, .3); display: block; }
+  .dots i.on { background: var(--gold); }
+  .car-desc { margin: 0; font-size: 14px; line-height: 1.4; color: var(--snow); }
+  .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
+  .stat { display: grid; gap: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .stat-row { display: flex; justify-content: space-between; gap: 6px; }
+  .stat-row b { color: var(--paper); font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+  .bar { height: 4px; background: rgba(245, 248, 251, .14); position: relative; }
+  .bar b { position: absolute; inset: 0 auto 0 0; background: var(--paper); }
+  .garage-foot { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+  .pb { font-family: var(--display); font-weight: 700; font-size: 14px; color: var(--snow); font-variant-numeric: tabular-nums; letter-spacing: .03em; }
   .go {
-    justify-self: start;
     background: var(--gold); color: var(--ink); border: 0;
-    font-family: var(--display); font-weight: 800; font-size: 24px; letter-spacing: .06em; text-transform: uppercase;
-    padding: 12px 28px 13px 22px;
+    font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 11px 28px 12px 20px;
     clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
   }
   .go:active { transform: translateY(1px); }
-  .ghost {
-    background: transparent; color: var(--paper); border: 2px solid rgba(245, 248, 251, .7);
-    font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: .06em; text-transform: uppercase;
-    padding: 9px 18px;
-  }
-  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-  .fineprint { color: var(--snow); opacity: .75; font-size: 12px; margin: 0; }
+  .howto { border-top: 1px solid rgba(245, 248, 251, .14); padding-top: 8px; }
+  .howto summary { font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--snow); cursor: pointer; }
+  .steps { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .steps li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; font-size: 14px; line-height: 1.4; color: var(--snow); }
+  .steps li b { font-family: var(--display); font-weight: 800; color: var(--gold); font-size: 18px; line-height: 1.1; }
 
   /* ---------- Sonuç ---------- */
-  #result { display: grid; align-content: end; background: linear-gradient(180deg, rgba(13, 27, 51, 0) 20%, rgba(13, 27, 51, .82)); }
-  .res { max-width: 640px; width: 100%; margin: 0 auto; display: grid; gap: 0; animation: slidein .35s ease-out; }
+  #result {
+    position: absolute; inset: 0; overflow-y: auto;
+    padding: calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 20px);
+    display: grid; align-content: end;
+    background: linear-gradient(180deg, rgba(11, 23, 48, 0) 25%, rgba(11, 23, 48, .8));
+    touch-action: pan-y;
+  }
+  .res { max-width: 640px; width: 100%; margin: 0 auto; display: grid; animation: slidein .35s ease-out both; }
   @keyframes slidein { from { transform: translateY(24px); opacity: 0; } }
   .res-head { display: flex; align-items: stretch; flex-wrap: wrap; }
   .res-head span { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; padding: 4px 10px; }
   .res-tag { background: var(--red); color: var(--paper); }
   .res-tag.rec { background: var(--gold); color: var(--ink); }
   .res-who { background: var(--paper); color: var(--ink); }
-  .res-main {
-    background: var(--ink); color: var(--paper);
-    display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: end;
-    padding: 12px 16px 14px;
-  }
+  .res-main { background: var(--ink); color: var(--paper); display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: end; padding: 12px 16px 14px; }
   .res-dist { font-family: var(--display); font-weight: 800; font-style: italic; font-size: clamp(54px, 15vw, 84px); line-height: .85; font-variant-numeric: tabular-nums; }
   .res-dist small { font-size: .4em; font-style: normal; margin-left: 4px; }
   .res-total { text-align: right; font-family: var(--display); }
@@ -240,45 +208,40 @@
   .res-note { grid-column: 1 / -1; color: var(--snow); font-size: 14px; }
   .res-table { background: var(--paper); color: var(--ink); padding: 10px 16px 12px; display: grid; gap: 8px; }
   .judges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .judges .jl { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
-  .judge { font-family: var(--display); font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; background: var(--snow); padding: 2px 8px; min-width: 46px; text-align: center; }
-  .judge.drop { text-decoration: line-through; color: var(--muted); background: transparent; }
+  .jl { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: #61758f; margin-right: 4px; }
+  .judge { font-family: var(--display); font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; background: #dbe6f0; padding: 2px 8px; min-width: 44px; text-align: center; }
+  .judge.drop { text-decoration: line-through; color: #61758f; background: transparent; }
   .pts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   .pt { display: grid; }
-  .pt small { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .pt small { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #61758f; }
   .pt b { font-family: var(--display); font-weight: 800; font-size: 22px; font-variant-numeric: tabular-nums; }
-  .res-actions { padding: 12px 0 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .res-actions { padding-top: 12px; }
+  .ghost { background: transparent; color: var(--paper); border: 2px solid rgba(245, 248, 251, .7); font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: .06em; text-transform: uppercase; padding: 9px 18px; }
 
-  .board { display: grid; gap: 0; background: var(--paper); }
-  .board-row {
-    display: grid; grid-template-columns: 28px 1fr auto auto; gap: 10px; align-items: center;
-    padding: 6px 10px; font-size: 14px; border-bottom: 1px solid var(--snow);
-    font-variant-numeric: tabular-nums;
-  }
-  .board-row:last-child { border-bottom: 0; }
-  .board-row .rk { font-family: var(--display); font-weight: 800; font-size: 18px; color: var(--muted); }
-  .board-row .nm { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .board-row .ds { font-family: var(--display); font-weight: 700; font-size: 17px; }
-  .board-row .tt { font-family: var(--display); font-weight: 700; font-size: 17px; color: var(--ink-2); min-width: 52px; text-align: right; }
-  .board-empty { padding: 10px; font-size: 14px; color: var(--muted); }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--display); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--snow); background: var(--ink); }
 
-  @media (prefers-reduced-motion: reduce) {
-    .prompt.hot { animation: none; }
-    .res { animation: none; }
-    .ticker { transition: none; }
-  }
   @media (max-width: 480px) {
     .wind-label { display: none; }
     .wind { font-size: 13px; padding: 5px 8px; gap: 6px; }
-    .bug-main { gap: 10px; padding-right: 18px; }
+    .bug-main { gap: 10px; }
     .bug-car { font-size: 14px; }
     .speed { font-size: 26px; }
     .judge { font-size: 16px; min-width: 40px; padding: 2px 6px; }
-    .stat { grid-template-columns: 84px 1fr; font-size: 10px; }
+    .car-name { font-size: 30px; }
   }
-  @media (max-height: 520px) and (orientation: landscape) {
+  @media (max-height: 560px) and (orientation: landscape) {
+    #menu { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto 1fr; }
+    .brand { grid-column: 1; grid-row: 1; }
+    h1 { font-size: 46px; }
+    .garage { grid-column: 2; grid-row: 1 / span 2; align-self: end; width: 360px; padding: 10px 14px 12px; gap: 8px; }
+    .car-desc { display: none; }
     .speed { font-size: 24px; }
     .prompt { font-size: 18px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .prompt.hot, .res { animation: none; }
+    .ticker { transition: none; }
   }
 </style>
 
@@ -301,7 +264,7 @@
         <span id="windVal">0.0 m/s</span>
       </div>
       <div class="tobeat" id="hudBeat" hidden></div>
-      <button id="muteBtn" type="button">Ses: açık</button>
+      <button class="chip-btn" id="muteBtn" type="button">Ses: açık</button>
     </div>
     <div class="bottom">
       <div class="meter" id="meter" hidden>
@@ -318,42 +281,46 @@
     <div class="lights" id="lights" hidden><i></i><i></i><i></i></div>
   </div>
 
-  <section id="menu" class="overlay" aria-label="Araba seçimi">
-    <div class="menu-inner">
+  <section id="menu" aria-label="Garaj">
+    <header class="brand">
       <div class="eyebrow"><span class="e1">Dünya Kupası</span><span class="e2" id="menuHill">Kartal Tepe</span></div>
       <h1>Supercar <em>Jumping</em></h1>
-      <p class="lede">Kayakla atlama kulesi, ama atlayan süper araba. Rampadan son gaz in, engebeleri aş, kenarda zıpla ve olabildiğince uzağa süzül. Ağır araba rüzgâra aldırmaz, hafif araba uçar ama sert inişte dağılır.</p>
-
-      <div>
-        <p class="section-label">Arabanı seç</p>
-        <div class="cars" id="cars"></div>
-      </div>
-
-      <div>
-        <p class="section-label">Nasıl oynanır</p>
-        <div class="howto">
-          <div class="step"><span class="step-n">1</span><div><b>İnişte dokun</b><span>Bir kez nitro yakar. Zamanlamayı sen seç; nitro 2,6 saniye sürer.</span></div></div>
-          <div class="step"><span class="step-n">2</span><div><b>Kenarda zıpla</b><span>Sarı bölgede dokun. Kenara ne kadar yakın basarsan itiş o kadar güçlü olur.</span></div></div>
-          <div class="step"><span class="step-n">3</span><div><b>Basılı tut, süzül</b><span>Basılı tutunca burun kalkar, araba süzülür. Bırakınca burun düşer. Yokuşa paralel in.</span></div></div>
+      <div class="leader" id="leader" hidden></div>
+    </header>
+    <div class="garage">
+      <div class="garage-top">
+        <button class="nav" id="prevCar" type="button" aria-label="Önceki araba">‹</button>
+        <div class="garage-name">
+          <span class="car-cls" id="carCls"></span>
+          <span class="car-name" id="carName"></span>
+          <span class="dots" id="dots"></span>
         </div>
+        <button class="nav" id="nextCar" type="button" aria-label="Sonraki araba">›</button>
       </div>
-
-      <div class="row">
+      <p class="car-desc" id="carDesc"></p>
+      <div class="stats" id="carStats"></div>
+      <div class="garage-foot">
+        <span class="pb" id="carPb"></span>
         <button class="go" id="goBtn" type="button">Start kapısına geç</button>
       </div>
-
-      <div>
-        <p class="section-label">Bu cihazdaki en iyiler</p>
-        <div class="board" id="board"></div>
-      </div>
-      <p class="fineprint">Prototip · Araçlar ve tepe hayal ürünüdür. Masaüstünde boşluk tuşu da çalışır.</p>
+      <details class="howto" id="howto">
+        <summary>Nasıl oynanır</summary>
+        <ol class="steps">
+          <li><b>1</b><span>İnişte bir kez dokun: nitro yanar (2,6 sn).</span></li>
+          <li><b>2</b><span>Sarı bölgede dokun: zıpla. Kenara ne kadar yakınsa itiş o kadar güçlü.</span></li>
+          <li><b>3</b><span>Havada basılı tut: burun kalkar, süzülürsün. Bırak: burun düşer. Yokuşa paralel in.</span></li>
+        </ol>
+      </details>
     </div>
   </section>
 
-  <section id="result" class="overlay" hidden aria-label="Sonuç">
+  <section id="result" hidden aria-label="Sonuç">
     <div class="res" id="resBox"></div>
   </section>
+
+  <div id="loading">Pist hazırlanıyor…</div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="physics.js"></script>
 <script src="game.js"></script>

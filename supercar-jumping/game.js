@@ -1,20 +1,814 @@
-// Supercar Jumping — çizim, kamera, arayüz, ses.
+// Supercar Jumping — 3D sahne, takip kamerası, arayüz, ses.
+// Fizik 2D (physics.js): x ileri, y yukarı. Sahnede z yanal eksendir.
 (() => {
   const SJ = window.SJ;
+  const T = window.THREE;
   const { clamp, CARS } = SJ;
   const hill = SJ.buildHill(SJ.HILL_CFG);
   const $ = (id) => document.getElementById(id);
-  const cv = $('cv');
-  const ctx = cv.getContext('2d');
 
-  const COLORS = {
-    ink: '#0d1b33', paper: '#f5f8fb', red: '#e1342a', gold: '#f5b700', go: '#29cc63',
-    snowTop: '#ffffff', snowMid: '#e4edf6', snowDeep: '#b9cbe0', snowLine: '#9fb8d3',
-    back: '#cfdcea', backShade: '#b6c8dc', pine: '#1e3a3a', pine2: '#2c4f48',
-    sky1: '#2f63a8', sky2: '#86b5df', sky3: '#e8f0f7', mtnFar: '#a9c0db', mtnNear: '#7f9bbd',
+  if (!T) { $('loading').textContent = '3D motoru yüklenemedi. Bağlantını kontrol edip sayfayı yenile.'; return; }
+
+  const lin = (hex) => new T.Color(hex).convertSRGBToLinear();
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const smooth01 = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
+
+  // ---------- Gürültü ----------
+  function hash(i, j) {
+    let h = (Math.imul(i, 374761393) + Math.imul(j, 668265263)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+  }
+  function vnoise(x, y) {
+    const i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j;
+    const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+    const a = hash(i, j), b = hash(i + 1, j), c = hash(i, j + 1), d = hash(i + 1, j + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  const fbm = (x, y) => vnoise(x, y) * 0.55 + vnoise(x * 2.1 + 7, y * 2.1) * 0.3 + vnoise(x * 4.3, y * 4.3 + 3) * 0.15;
+  function rng(seed) { let s = seed >>> 0; return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); }
+
+  // ---------- Arazi ----------
+  const TO = hill.TO;
+  const INRUN_TAN = Math.tan(28 * Math.PI / 180);
+  const halfW = (x) => (x < TO ? 3.7 : lerp(3.7, 17, smooth01((x - TO) / 45)));
+  const trackY = (x) => (x < 0 ? hill.y(0) - x * INRUN_TAN : hill.y(x));
+  const smoothY = (() => {
+    const x0 = -160, n = Math.ceil(hill.xEnd - x0) + 1;
+    const raw = new Float64Array(n), out = new Float64Array(n);
+    for (let i = 0; i < n; i++) raw[i] = trackY(x0 + i);
+    const w = 30;
+    for (let i = 0; i < n; i++) { let s = 0, c = 0; for (let k = -w; k <= w; k += 3) { s += raw[clamp(i + k, 0, n - 1)]; c++; } out[i] = s / c; }
+    return (x) => { const f = clamp(x - x0, 0, n - 1.001); const i = Math.floor(f); return out[i] + (out[i + 1] - out[i]) * (f - i); };
+  })();
+  function terrainY(x, z) {
+    const hw = halfW(x);
+    const d = Math.abs(z) - hw;
+    const base = trackY(x);
+    if (d <= 0) return base;
+    const wallH = x < TO ? 1.15 : 0.55;
+    const wb = clamp((d - 4) / 30, 0, 1);
+    const yb = lerp(base, Math.max(base, smoothY(x)), wb);
+    let h = wallH * smooth01(d / 0.7);
+    if (d > 1.4) {
+      h += (d - 1.4) * 0.16 + Math.pow(Math.max(0, d - 10) / 45, 2) * 20;
+      h += (fbm(x * 0.018, z * 0.018) - 0.45) * clamp((d - 10) / 30, 0, 1) * 26;
+    }
+    return yb + h;
+  }
+
+  // ---------- Kurulum ----------
+  const canvas = $('cv');
+  const renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  const mobile = Math.min(window.innerWidth, window.innerHeight) < 600;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobile ? 1.6 : 2));
+  renderer.outputEncoding = T.sRGBEncoding;
+  renderer.toneMapping = T.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.92;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = T.PCFSoftShadowMap;
+
+  const scene = new T.Scene();
+  const HORIZON = 0xc9dcee;
+  scene.fog = new T.Fog(lin(HORIZON), 500, 4600);
+  const camera = new T.PerspectiveCamera(60, 1, 0.3, 6000);
+  const SUN_DIR = new T.Vector3(-0.35, 0.5, 0.8).normalize();
+
+  // Gökyüzü
+  const skyMat = new T.ShaderMaterial({
+    side: T.BackSide, depthWrite: false, fog: false,
+    uniforms: {
+      top: { value: lin(0x2a5ea8) }, mid: { value: lin(0x86b4e0) }, hor: { value: lin(HORIZON) }, bot: { value: lin(0xe9f0f6) },
+      sunDir: { value: SUN_DIR },
+    },
+    vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: [
+      'uniform vec3 top; uniform vec3 mid; uniform vec3 hor; uniform vec3 bot; uniform vec3 sunDir; varying vec3 vDir;',
+      'void main(){ vec3 d = normalize(vDir); float h = d.y;',
+      ' vec3 c = h > 0.0 ? mix(hor, mid, smoothstep(0.0, 0.18, h)) : mix(hor, bot, smoothstep(0.0, -0.2, h));',
+      ' c = mix(c, top, smoothstep(0.18, 0.75, h));',
+      ' float s = max(dot(d, sunDir), 0.0);',
+      ' c += vec3(1.0, 0.92, 0.78) * (pow(s, 900.0) * 6.0 + pow(s, 40.0) * 0.35 + pow(s, 6.0) * 0.08);',
+      ' gl_FragColor = vec4(c, 1.0);',
+      ' #include <tonemapping_fragment>',
+      ' #include <encodings_fragment>',
+      '}',
+    ].join('\n'),
+  });
+  const sky = new T.Mesh(new T.SphereGeometry(5000, 32, 16), skyMat);
+  scene.add(sky);
+
+  // Ortam yansıması (araba boyası için)
+  {
+    const pm = new T.PMREMGenerator(renderer);
+    const envScene = new T.Scene();
+    envScene.add(new T.Mesh(new T.SphereGeometry(100, 32, 16), skyMat));
+    scene.environment = pm.fromScene(envScene, 0.02).texture;
+    pm.dispose();
+  }
+
+  scene.add(new T.HemisphereLight(lin(0xcfe2ff), lin(0x6d7f99), 0.42));
+  const sun = new T.DirectionalLight(lin(0xffeccc), 2.7);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
+  const sc = sun.shadow.camera;
+  sc.left = -22; sc.right = 22; sc.top = 22; sc.bottom = -22; sc.near = 1; sc.far = 260;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.02;
+  scene.add(sun); scene.add(sun.target);
+
+  // Arazi ağı
+  (function buildTerrain() {
+    const xs = [];
+    for (let x = -150; x <= hill.xEnd - 1; ) {
+      xs.push(x);
+      x += Math.abs(x - TO) < 40 ? 0.5 : x < 0 ? 4 : 1.25;
+    }
+    xs.push(TO, TO + 0.26);
+    xs.sort((a, b) => a - b);
+    const inner = [-1, -0.62, -0.24, 0, 0.24, 0.62, 1];
+    const outer = [0.25, 0.6, 1.0, 1.6, 2.6, 4.2, 6.5, 10, 15, 22, 31, 43, 58, 77, 100, 128, 162, 205, 260, 330];
+    const cols = outer.length * 2 + inner.length;
+    const pos = new Float32Array(xs.length * cols * 3);
+    const col = new Float32Array(xs.length * cols * 3);
+    const cTrack = lin(0xe6eef7), cGroove = lin(0xbfd2e6), cSnow = lin(0xf7fafd), cSnow2 = lin(0xdbe6f1), cRock = lin(0x7d8a9b), cWall = lin(0xd0dce9);
+    const tmp = new T.Color();
+    let k = 0;
+    for (const x of xs) {
+      const hw = halfW(x);
+      const zs = [];
+      for (let j = outer.length - 1; j >= 0; j--) zs.push(-(hw + outer[j]));
+      for (const f of inner) zs.push(f * hw);
+      for (const d of outer) zs.push(hw + d);
+      for (const z of zs) {
+        pos[k * 3] = x; pos[k * 3 + 1] = terrainY(x, z); pos[k * 3 + 2] = z;
+        const d = Math.abs(z) - hw;
+        if (d <= 0.001) {
+          const groove = x < TO && Math.abs(Math.abs(z) - hw * 0.24) < 0.01;
+          tmp.copy(x < TO ? (groove ? cGroove : cTrack) : cSnow);
+          if (x >= TO) tmp.lerp(cSnow2, 0.18 * fbm(x * 0.05, z * 0.2));
+        } else if (d < 1.5) {
+          tmp.copy(cWall);
+        } else {
+          tmp.copy(cSnow).lerp(cSnow2, clamp(fbm(x * 0.03 + 11, z * 0.03) * 1.3 - 0.2, 0, 1));
+          const rock = fbm(x * 0.011 + 3, z * 0.011 + 9);
+          if (d > 25 && rock > 0.6) tmp.lerp(cRock, clamp((rock - 0.6) * 4, 0, 0.85));
+        }
+        col[k * 3] = tmp.r; col[k * 3 + 1] = tmp.g; col[k * 3 + 2] = tmp.b;
+        k++;
+      }
+    }
+    const idx = [];
+    for (let i = 0; i < xs.length - 1; i++) {
+      for (let j = 0; j < cols - 1; j++) {
+        const a = i * cols + j, b = (i + 1) * cols + j, c = (i + 1) * cols + j + 1, d = i * cols + j + 1;
+        idx.push(a, d, b, b, d, c);
+      }
+    }
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.BufferAttribute(pos, 3));
+    g.setAttribute('color', new T.BufferAttribute(col, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const m = new T.Mesh(g, new T.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 }));
+    m.receiveShadow = true;
+    scene.add(m);
+  })();
+
+  // Uzak dağlar
+  {
+    const r = rng(42);
+    const mat = new T.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 });
+    const cRock = lin(0x6f7f95), cSnowM = lin(0xf2f6fb);
+    for (let i = 0; i < 26; i++) {
+      const ang = -1.25 + (i / 25) * 2.5 + (r() - 0.5) * 0.08;
+      const dist = 2600 + r() * 1300;
+      const rad = 420 + r() * 520, ht = 420 + r() * 560;
+      const g = new T.ConeGeometry(rad, ht, 14, 8, true).toNonIndexed();
+      const p = g.attributes.position;
+      const cArr = new Float32Array(p.count * 3);
+      for (let v = 0; v < p.count; v++) {
+        const x = p.getX(v), y = p.getY(v), z = p.getZ(v), f = (y + ht / 2) / ht;
+        const n = hash(Math.round(x * 0.1) + i * 31, Math.round(z * 0.1 + y * 0.1));
+        if (f < 0.98) { p.setX(v, x * (1 + (n - 0.5) * 0.45)); p.setZ(v, z * (1 + (n - 0.5) * 0.45)); p.setY(v, y + (n - 0.5) * ht * 0.1); }
+        const c = f > 0.32 + n * 0.25 ? cSnowM : cRock;
+        cArr[v * 3] = c.r; cArr[v * 3 + 1] = c.g; cArr[v * 3 + 2] = c.b;
+      }
+      g.setAttribute('color', new T.BufferAttribute(cArr, 3));
+      g.computeVertexNormals();
+      const mesh = new T.Mesh(g, mat);
+      const cx = TO + 200 + Math.cos(ang) * dist, cz = Math.sin(ang) * dist;
+      mesh.position.set(cx, smoothY(Math.min(cx, hill.xEnd)) - 260 + ht / 2, cz);
+      scene.add(mesh);
+    }
+  }
+
+  // Ağaçlar
+  function pineGeometry() {
+    const prof = [[0.0, 0], [0.18, 0], [0.18, 0.5], [1.7, 1.2], [0.75, 1.35], [1.35, 2.5], [0.55, 2.6], [1.0, 3.7], [0.35, 3.8], [0.6, 4.8], [0, 6.0]];
+    const g = new T.LatheGeometry(prof.map(([rr, y]) => new T.Vector2(rr, y)), 7).toNonIndexed();
+    g.computeVertexNormals();
+    const n = g.attributes.normal, p = g.attributes.position;
+    const cArr = new Float32Array(p.count * 3);
+    const green = lin(0x1d3b33), green2 = lin(0x2a5244), snow = lin(0xf2f6fb), trunk = lin(0x4a3527);
+    for (let v = 0; v < p.count; v++) {
+      const ny = n.getY(v), y = p.getY(v);
+      const c = y < 0.55 ? trunk : ny > 0.55 ? snow : (Math.floor(v / 3) % 2 ? green : green2);
+      cArr[v * 3] = c.r; cArr[v * 3 + 1] = c.g; cArr[v * 3 + 2] = c.b;
+    }
+    g.setAttribute('color', new T.BufferAttribute(cArr, 3));
+    return g;
+  }
+  const crowdZone = (x, d) => x > hill.xFlat - 50 && x < hill.xFlat + 140 && d < 26;
+  {
+    const r = rng(9);
+    const N = mobile ? 1500 : 2600;
+    const mesh = new T.InstancedMesh(pineGeometry(), new T.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95 }), N);
+    const m4 = new T.Matrix4(), q = new T.Quaternion(), sv = new T.Vector3(), pv = new T.Vector3(), up = new T.Vector3(0, 1, 0);
+    let n = 0, tries = 0;
+    while (n < N && tries < N * 4) {
+      tries++;
+      const x = -140 + r() * (hill.xEnd + 130);
+      const side = r() < 0.5 ? -1 : 1;
+      const d = 2.4 + Math.pow(r(), 1.7) * 230;
+      if (crowdZone(x, d)) continue;
+      if (x > TO - 8 && x < TO + 60 && d < 8) continue;
+      if (x > hill.xFlat + 60 && x < hill.xFlat + 90 && d < 10) continue;
+      const z = side * (halfW(x) + d);
+      const s = 0.8 + r() * 1.5 + (d > 60 ? 0.6 : 0);
+      q.setFromAxisAngle(up, r() * 6.28);
+      pv.set(x, terrainY(x, z) - 0.2, z);
+      sv.set(s, s * (0.9 + r() * 0.3), s);
+      m4.compose(pv, q, sv);
+      mesh.setMatrixAt(n++, m4);
+    }
+    mesh.count = n;
+    scene.add(mesh);
+  }
+
+  // Seyirciler
+  const crowd = (() => {
+    const r = rng(77);
+    const N = 760;
+    const g = new T.CylinderGeometry(0.2, 0.26, 1.62, 7); g.translate(0, 0.81, 0);
+    const mesh = new T.InstancedMesh(g, new T.MeshStandardMaterial({ roughness: 0.8 }), N);
+    const palette = [0xe1342a, 0xf5b700, 0x2058c9, 0xf5f8fb, 0x29cc63, 0x15233f, 0xff7a1a, 0xc21f6a].map(lin);
+    const data = [];
+    const m4 = new T.Matrix4();
+    for (let i = 0; i < N; i++) {
+      const x = hill.xFlat - 45 + r() * 180;
+      const side = r() < 0.5 ? -1 : 1;
+      const z = side * (halfW(x) + 2.2 + r() * 16);
+      const y = terrainY(x, z);
+      data.push({ x, y, z, ph: r() * 6.28 });
+      mesh.setColorAt(i, palette[Math.floor(r() * palette.length)]);
+      m4.makeTranslation(x, y, z);
+      mesh.setMatrixAt(i, m4);
+    }
+    scene.add(mesh);
+    const heads = new T.InstancedMesh(new T.SphereGeometry(0.17, 8, 6), new T.MeshStandardMaterial({ roughness: 0.7 }), N);
+    const hats = [0xe1342a, 0xf5f8fb, 0x15233f, 0xf5b700, 0x2058c9].map(lin);
+    data.forEach((c, i) => { heads.setColorAt(i, hats[i % hats.length]); m4.makeTranslation(c.x, c.y + 1.86, c.z); heads.setMatrixAt(i, m4); });
+    scene.add(heads);
+    return { mesh, heads, data };
+  })();
+  const crowdM4 = new T.Matrix4();
+  function animateCrowd(t, excited) {
+    for (let i = 0; i < crowd.data.length; i++) {
+      const c = crowd.data[i];
+      const bob = excited ? Math.max(0, Math.sin(t * 9 + c.ph)) * 0.35 : Math.max(0, Math.sin(t * 2 + c.ph)) * 0.05;
+      crowdM4.makeTranslation(c.x, c.y + bob, c.z);
+      crowd.mesh.setMatrixAt(i, crowdM4);
+      crowdM4.makeTranslation(c.x, c.y + bob + 1.86, c.z);
+      crowd.heads.setMatrixAt(i, crowdM4);
+    }
+    crowd.mesh.instanceMatrix.needsUpdate = true;
+    crowd.heads.instanceMatrix.needsUpdate = true;
+  }
+
+  // ---------- Yazı dokuları ----------
+  const fontStack = '"Saira Condensed", "Arial Narrow", sans-serif';
+  const redraws = [];
+  function textTexture(w, h, draw) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const tex = new T.CanvasTexture(c);
+    tex.encoding = T.sRGBEncoding;
+    tex.anisotropy = 4;
+    const paint = () => { const g = c.getContext('2d'); g.clearRect(0, 0, w, h); draw(g, w, h); tex.needsUpdate = true; };
+    paint(); redraws.push(paint);
+    return tex;
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => redraws.forEach((f) => f()));
+
+  function bannerTex(text, bg, fg, accent) {
+    return textTexture(512, 80, (g, w, h) => {
+      g.fillStyle = bg; g.fillRect(0, 0, w, h);
+      if (accent) { g.fillStyle = accent; g.fillRect(0, h - 8, w, 8); }
+      g.fillStyle = fg; g.font = `italic 800 54px ${fontStack}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(text, w / 2, h / 2 + 2);
+    });
+  }
+  const BANNERS = [
+    bannerTex('SUPERCAR JUMPING', '#0b1730', '#f5f8fb', '#f5b700'),
+    bannerTex('KARTAL TEPE', '#e1342a', '#f5f8fb'),
+    bannerTex('NİTRO+', '#f5b700', '#0b1730'),
+    bannerTex('SON GAZ', '#f5f8fb', '#0b1730', '#e1342a'),
+    bannerTex('DÜNYA KUPASI', '#1d4fbf', '#f5f8fb'),
+  ];
+  const bannerMats = BANNERS.map((map) => new T.MeshStandardMaterial({ map, roughness: 0.6, side: T.DoubleSide }));
+
+  // Pistin yanındaki panolar
+  function placePanel(x, side, w, h, mat, lift) {
+    const hw = halfW(x);
+    const z = side * (hw + 0.55);
+    const y = terrainY(x, z) + (lift || 0);
+    const holder = new T.Object3D();
+    holder.position.set(x, y + h / 2 + 0.05, z);
+    holder.rotation.z = Math.atan(hill.slope(x));
+    const m = new T.Mesh(new T.PlaneGeometry(w, h), mat);
+    m.rotation.y = side < 0 ? 0 : Math.PI;
+    m.receiveShadow = true;
+    holder.add(m);
+    scene.add(holder);
+    return holder;
+  }
+  {
+    let i = 0;
+    for (let x = 14; x < TO - 6; x += 15, i++) {
+      placePanel(x, -1, 12, 1.05, bannerMats[i % bannerMats.length], 0.2);
+      placePanel(x + 7, 1, 12, 1.05, bannerMats[(i + 2) % bannerMats.length], 0.2);
+    }
+    i = 0;
+    for (let s = 10; s < hill.HS + 90; s += 30, i++) {
+      const x = hill.xAtArc(s);
+      placePanel(x, -1, 14, 1.6, bannerMats[(i + 1) % bannerMats.length], 0.1);
+      placePanel(x + 10, 1, 14, 1.6, bannerMats[(i + 3) % bannerMats.length], 0.1);
+    }
+  }
+  // Mesafe tabelaları
+  for (let s = 20; s <= hill.HS + 40; s += 10) {
+    const color = s < hill.K - 40 ? '#1d4fbf' : s < hill.K ? '#1f9e4d' : s <= hill.HS ? '#e1342a' : '#0b1730';
+    const tex = textTexture(160, 96, (g, w, h) => {
+      g.fillStyle = color; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#ffffff'; g.font = `800 70px ${fontStack}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(String(s), w / 2, h / 2 + 3);
+    });
+    const mat = new T.MeshStandardMaterial({ map: tex, roughness: 0.5, side: T.DoubleSide, emissive: lin(0x333333), emissiveMap: tex });
+    const x = hill.xAtArc(s);
+    placePanel(x, -1, 1.9, 1.15, mat, 1.75);
+    placePanel(x, 1, 1.9, 1.15, mat, 1.75);
+  }
+
+  // Pist üstü çizgiler (K, HS, 50 m'ler, geçilecek çizgi)
+  function slopeLine(s, color, thick, opacity) {
+    const x = hill.xAtArc(s);
+    const holder = new T.Object3D();
+    holder.position.set(x, hill.y(x) + 0.03, 0);
+    holder.rotation.z = Math.atan(hill.slope(x));
+    const m = new T.Mesh(new T.PlaneGeometry(thick, halfW(x) * 2), new T.MeshBasicMaterial({ color: lin(color), transparent: opacity < 1, opacity, polygonOffset: true, polygonOffsetFactor: -2 }));
+    m.rotation.x = -Math.PI / 2;
+    holder.add(m);
+    scene.add(holder);
+  }
+  // Gerçek tepelerdeki gibi iniş pistine her 5 m'de çam dalı çizgileri; inişte orta işaretler (derinlik ve hız hissi)
+  {
+    const lines = [];
+    for (let s = 5; s <= hill.HS + 120; s += 5) if (s % 50) lines.push(s);
+    const mesh = new T.InstancedMesh(new T.PlaneGeometry(0.22, 1), new T.MeshBasicMaterial({ color: lin(0x2f5a46), transparent: true, opacity: 0.5, polygonOffset: true, polygonOffsetFactor: -1 }), lines.length);
+    const m4 = new T.Matrix4(), q = new T.Quaternion(), e = new T.Euler(), pv = new T.Vector3(), sv = new T.Vector3();
+    lines.forEach((s, i) => {
+      const x = hill.xAtArc(s);
+      e.set(-Math.PI / 2, 0, 0, 'ZXY'); e.z = Math.atan(hill.slope(x));
+      q.setFromEuler(e);
+      pv.set(x, hill.y(x) + 0.02, 0);
+      sv.set(1, halfW(x) * 2 * 0.86, 1);
+      mesh.setMatrixAt(i, m4.compose(pv, q, sv));
+    });
+    scene.add(mesh);
+    const marks = [];
+    for (let x = 8; x < TO - 2; x += 6) marks.push(x);
+    const mm = new T.InstancedMesh(new T.PlaneGeometry(2.2, 0.16), new T.MeshBasicMaterial({ color: lin(0x5b86c9), transparent: true, opacity: 0.55, polygonOffset: true, polygonOffsetFactor: -1 }), marks.length * 2);
+    let k = 0;
+    for (const x of marks) {
+      for (const zz of [-halfW(x) + 0.35, halfW(x) - 0.35]) {
+        e.set(-Math.PI / 2, 0, 0, 'ZXY'); e.z = Math.atan(hill.slope(x));
+        q.setFromEuler(e);
+        pv.set(x, hill.y(x) + 0.02, zz); sv.set(1, 1, 1);
+        mm.setMatrixAt(k++, m4.compose(pv, q, sv));
+      }
+    }
+    scene.add(mm);
+  }
+  for (let s = 50; s <= hill.HS + 50; s += 50) slopeLine(s, 0x3a6fd0, 0.18, 0.55);
+  slopeLine(hill.K, 0xe1342a, 0.6, 1);
+  slopeLine(hill.HS, 0x0b1730, 0.45, 1);
+  const beat = (() => {
+    const holder = new T.Object3D();
+    const line = new T.Mesh(new T.PlaneGeometry(0.5, 40), new T.MeshBasicMaterial({ color: lin(0x29ff7a), polygonOffset: true, polygonOffsetFactor: -3 }));
+    line.rotation.x = -Math.PI / 2;
+    holder.add(line);
+    const tex = textTexture(8, 128, (g, w, h) => {
+      const gr = g.createLinearGradient(0, 0, 0, h);
+      gr.addColorStop(0, 'rgba(41,255,122,0)'); gr.addColorStop(1, 'rgba(41,255,122,0.9)');
+      g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    });
+    const wall = new T.Mesh(new T.PlaneGeometry(40, 7), new T.MeshBasicMaterial({ map: tex, transparent: true, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide, fog: false }));
+    wall.rotation.y = Math.PI / 2;
+    wall.position.y = 3.5;
+    holder.add(wall);
+    holder.visible = false;
+    scene.add(holder);
+    return {
+      set(s) {
+        if (s === null) { holder.visible = false; return; }
+        const x = hill.xAtArc(s);
+        holder.visible = true;
+        holder.position.set(x, hill.y(x) + 0.04, 0);
+        holder.rotation.z = Math.atan(hill.slope(x));
+        const w = halfW(x) * 2;
+        line.scale.y = w / 40; wall.scale.x = w / 40;
+      },
+    };
+  })();
+
+  // Kalkış kenarı, start kapısı, kule, tribün
+  {
+    const red = new T.MeshStandardMaterial({ color: lin(0xe1342a), roughness: 0.5 });
+    const white = new T.MeshStandardMaterial({ color: lin(0xf5f8fb), roughness: 0.5 });
+    const steel = new T.MeshStandardMaterial({ color: lin(0x2b3442), roughness: 0.4, metalness: 0.6 });
+    const lamp = new T.MeshStandardMaterial({ color: lin(0xffffff), emissive: lin(0xfff2c0), emissiveIntensity: 2.2 });
+    const edgeAng = Math.atan(hill.slope(TO - 1));
+    const hw = halfW(TO - 1);
+    const edge = new T.Mesh(new T.BoxGeometry(0.7, 0.12, hw * 2 + 0.2), red);
+    edge.position.set(TO - 0.35, hill.yTO + 0.02, 0); edge.rotation.z = edgeAng; edge.receiveShadow = true;
+    scene.add(edge);
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < 6; k++) {
+        const seg = new T.Mesh(new T.BoxGeometry(0.3, 0.6, 0.3), k % 2 ? white : red);
+        seg.position.set(TO, hill.yTO + 1.2 + k * 0.6, side * (hw + 0.9));
+        scene.add(seg);
+      }
+      const l = new T.Mesh(new T.SphereGeometry(0.22, 12, 8), lamp);
+      l.position.set(TO, hill.yTO + 4.9, side * (hw + 0.9));
+      scene.add(l);
+    }
+    const face = new T.Mesh(new T.BoxGeometry(1.4, hill.cfg.STEP + 1.2, hw * 2 + 3), new T.MeshStandardMaterial({ color: lin(0x9aa9bc), roughness: 0.9 }));
+    face.position.set(TO - 0.75, hill.yTO - (hill.cfg.STEP + 1.2) / 2 - 0.02, 0);
+    face.receiveShadow = true;
+    scene.add(face);
+    // Start kapısı
+    const gx = 0.5, gy = trackY(gx);
+    for (const side of [-1, 1]) {
+      const p = new T.Mesh(new T.BoxGeometry(0.45, 8.6, 0.45), steel);
+      p.position.set(gx, gy + 4.3, side * 4.9); p.castShadow = true;
+      scene.add(p);
+    }
+    const beam = new T.Mesh(new T.BoxGeometry(0.7, 1.5, 10.3), steel);
+    beam.position.set(gx, gy + 8.6, 0); beam.castShadow = true;
+    scene.add(beam);
+    const gateTex = textTexture(1024, 150, (g, w, h) => {
+      g.fillStyle = '#0b1730'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#e1342a'; g.fillRect(0, 0, 150, h);
+      g.fillStyle = '#f5f8fb'; g.font = `800 64px ${fontStack}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('START', 75, h / 2 + 2);
+      g.font = `italic 800 84px ${fontStack}`;
+      g.fillText('SUPERCAR JUMPING', 150 + (w - 150) / 2, h / 2 + 3);
+      g.fillStyle = '#f5b700'; g.fillRect(150, h - 10, w - 150, 10);
+    });
+    const banner = new T.Mesh(new T.PlaneGeometry(10.2, 1.48), new T.MeshStandardMaterial({ map: gateTex, emissive: lin(0x333333), emissiveMap: gateTex, roughness: 0.6 }));
+    banner.rotation.y = -Math.PI / 2;
+    banner.position.set(gx + 0.36, gy + 8.6, 0);
+    banner.rotation.y = Math.PI / 2;
+    scene.add(banner);
+    // Hakem kulesi
+    const tx = TO + 70, tz = halfW(tx) + 12;
+    const ty = terrainY(tx, tz);
+    const tower = new T.Mesh(new T.BoxGeometry(8, 16, 6), new T.MeshStandardMaterial({ color: lin(0xdfe6ee), roughness: 0.7 }));
+    tower.position.set(tx, ty + 8, tz + 2); tower.castShadow = true;
+    scene.add(tower);
+    const glass = new T.Mesh(new T.BoxGeometry(8.2, 2.6, 6.2), new T.MeshStandardMaterial({ color: lin(0x1a2f4f), roughness: 0.1, metalness: 0.7 }));
+    glass.position.set(tx, ty + 13.8, tz + 2);
+    scene.add(glass);
+    const towerSign = new T.Mesh(new T.PlaneGeometry(7.6, 1.2), bannerMats[0]);
+    towerSign.position.set(tx, ty + 11.4, tz - 1.02);
+    scene.add(towerSign);
+    // Bitiş tribünü
+    const fx = hill.xFlat + 175;
+    const stand = new T.Mesh(new T.BoxGeometry(6, 5, 60), new T.MeshStandardMaterial({ color: lin(0x15233f), roughness: 0.7 }));
+    stand.position.set(fx, trackY(fx) + 2.5, 0); stand.castShadow = true;
+    scene.add(stand);
+    const finish = new T.Mesh(new T.PlaneGeometry(36, 3.2), new T.MeshStandardMaterial({ map: BANNERS[0], roughness: 0.6 }));
+    finish.rotation.y = -Math.PI / 2; finish.position.set(fx - 3.02, trackY(fx) + 3.2, 0);
+    scene.add(finish);
+  }
+
+  // ---------- Arabalar ----------
+  const CAR_W = { vento: 2.04, corsa: 1.96, titan: 2.06, bolt: 1.7 };
+  const PROFILES = {
+    wedge: { top: [[-0.5, 0.52], [-0.4, 0.6], [-0.3, 0.66], [-0.14, 0.93], [0.06, 0.95], [0.26, 0.6], [0.42, 0.42], [0.5, 0.3]], belt: 0.6, wing: true, splitter: true },
+    gt: { top: [[-0.5, 0.56], [-0.42, 0.62], [-0.28, 0.67], [-0.13, 0.95], [0.08, 0.96], [0.22, 0.68], [0.42, 0.58], [0.5, 0.46]], belt: 0.64, ducktail: true },
+    suv: { top: [[-0.5, 0.86], [-0.47, 0.95], [-0.4, 0.98], [0.14, 0.98], [0.29, 0.68], [0.45, 0.62], [0.5, 0.5]], belt: 0.66, rack: true },
+    mini: { top: [[-0.5, 0.82], [-0.46, 0.95], [-0.38, 0.99], [0.2, 0.99], [0.36, 0.64], [0.47, 0.58], [0.5, 0.46]], belt: 0.62 },
+  };
+  function chaikin(pts, iter) {
+    let p = pts;
+    for (let k = 0; k < iter; k++) {
+      const out = [p[0]];
+      for (let i = 0; i < p.length - 1; i++) {
+        const a = p[i], b = p[i + 1];
+        out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+      }
+      out.push(p[p.length - 1]);
+      p = out;
+    }
+    return p;
+  }
+  function clipY(poly, yc, keepAbove) {
+    const out = [];
+    const inside = (p) => (keepAbove ? p[1] >= yc : p[1] <= yc);
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const ia = inside(a), ib = inside(b);
+      if (ia) out.push(a);
+      if (ia !== ib) { const t = (yc - a[1]) / (b[1] - a[1]); out.push([a[0] + (b[0] - a[0]) * t, yc]); }
+    }
+    return out;
+  }
+  function mergeVerts(g) {
+    const p = g.attributes.position;
+    const map = new Map(), verts = [], index = [];
+    for (let i = 0; i < p.count; i++) {
+      const key = `${Math.round(p.getX(i) * 500)},${Math.round(p.getY(i) * 500)},${Math.round(p.getZ(i) * 500)}`;
+      let id = map.get(key);
+      if (id === undefined) { id = verts.length / 3; map.set(key, id); verts.push(p.getX(i), p.getY(i), p.getZ(i)); }
+      index.push(id);
+    }
+    const out = new T.BufferGeometry();
+    out.setAttribute('position', new T.Float32BufferAttribute(verts, 3));
+    out.setIndex(index);
+    out.computeVertexNormals();
+    return out;
+  }
+  function extrude(poly, depth, bevel, taperFrom, taper) {
+    const shape = new T.Shape(poly.map(([x, y]) => new T.Vector2(x, y)));
+    const g = new T.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel * 0.8, bevelSegments: 3, curveSegments: 4, steps: 1 });
+    g.translate(0, 0, -depth / 2);
+    if (taper) {
+      const p = g.attributes.position;
+      let ymax = -1e9; for (let i = 0; i < p.count; i++) ymax = Math.max(ymax, p.getY(i));
+      for (let i = 0; i < p.count; i++) {
+        const t = clamp((p.getY(i) - taperFrom) / Math.max(0.01, ymax - taperFrom), 0, 1);
+        p.setZ(i, p.getZ(i) * (1 - taper * t));
+      }
+    }
+    return mergeVerts(g);
+  }
+
+  const MAT = {
+    glass: new T.MeshPhysicalMaterial({ color: lin(0x0c1626), metalness: 0.1, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.6 }),
+    black: new T.MeshStandardMaterial({ color: lin(0x15171c), roughness: 0.55, metalness: 0.2 }),
+    tire: new T.MeshStandardMaterial({ color: lin(0x111214), roughness: 0.85 }),
+    rim: new T.MeshStandardMaterial({ color: lin(0xc6ccd4), roughness: 0.25, metalness: 0.9 }),
+    chrome: new T.MeshStandardMaterial({ color: lin(0xdfe4ea), roughness: 0.15, metalness: 1 }),
+    tail: new T.MeshStandardMaterial({ color: lin(0x5a0a08), emissive: lin(0xff2a1a), emissiveIntensity: 1.6 }),
+    head: new T.MeshStandardMaterial({ color: lin(0xffffff), emissive: lin(0xfff5d6), emissiveIntensity: 1.5 }),
+    flame: new T.MeshBasicMaterial({ color: lin(0x7fc8ff), transparent: true, opacity: 0.85, blending: T.AdditiveBlending, depthWrite: false }),
   };
 
-  // ---------- Kayıtlar (yalnızca bu tarayıcıda) ----------
+  function buildCar(car) {
+    const P = PROFILES[car.shape];
+    const L = car.len, Hh = car.h, Wd = CAR_W[car.id];
+    const wr = car.wr, ra = wr * 1.16;
+    const yb = Math.min(0.2 * Hh, wr * 0.75);
+    const xr = -car.wb / 2, xf = car.wb / 2;
+    // Dış hat: üst profil (arkadan öne), ön alt köşe, sonra çamurluk kemerleriyle alt kenar (önden arkaya)
+    const top = chaikin(P.top.map(([u, v]) => [u * L, v * Hh]), 2);
+    const arch = (xc) => {
+      const pts = [];
+      const a0 = Math.asin(clamp((yb - wr) / ra, -1, 1));
+      for (let k = 0; k <= 10; k++) { const a = a0 + (Math.PI - 2 * a0) * (k / 10); pts.push([xc + ra * Math.cos(a), wr + ra * Math.sin(a)]); }
+      return pts;
+    };
+    const outline = [[-L / 2, yb + 0.02], ...top, [L / 2, yb + 0.04], ...arch(xf), ...arch(xr)];
+    const poly = outline.slice().reverse();
+    const belt = P.belt * Hh;
+    const lower = clipY(poly, belt + 0.02, false);
+    const upper = clipY(poly, belt - 0.04, true);
+    let ymax = -1e9; for (const p of upper) ymax = Math.max(ymax, p[1]);
+    const roof = clipY(poly, ymax - 0.07 * Hh, true);
+
+    const paint = new T.MeshPhysicalMaterial({ color: lin(car.color), metalness: 0.35, roughness: 0.38, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 0.75 });
+    const trimMat = new T.MeshPhysicalMaterial({ color: lin(car.trim), metalness: 0.3, roughness: 0.4, clearcoat: 0.6 });
+    const g = new T.Group();
+    const body = new T.Mesh(extrude(lower, Wd - 0.2, 0.1, belt * 0.6, 0.06), paint);
+    const cabin = new T.Mesh(extrude(upper, Wd * 0.84 - 0.12, 0.06, belt, 0.22), MAT.glass);
+    const roofM = new T.Mesh(extrude(roof, Wd * 0.7 - 0.1, 0.05, ymax - 0.1, 0.1), paint);
+    roofM.position.y = 0.012;
+    [body, cabin, roofM].forEach((m) => { m.castShadow = true; m.receiveShadow = true; g.add(m); });
+    const under = new T.Mesh(new T.BoxGeometry(L * 0.86, yb + 0.12, Wd * 0.86), MAT.black);
+    under.position.y = (yb + 0.12) / 2 + 0.06; g.add(under);
+    const skirt = new T.Mesh(new T.BoxGeometry(Math.max(0.2, car.wb - ra * 2 - 0.1), 0.12, Wd + 0.02), trimMat);
+    skirt.position.set(0, yb + 0.08, 0); g.add(skirt);
+    // Arka: difüzör, stoplar, egzozlar
+    const rearX = -L / 2 - 0.08;
+    const diffuser = new T.Mesh(new T.BoxGeometry(0.18, 0.2, Wd * 0.8), MAT.black);
+    diffuser.position.set(rearX + 0.04, yb + 0.06, 0); g.add(diffuser);
+    const tailY = clamp(P.belt * Hh - 0.12, yb + 0.25, Hh * 0.7);
+    if (car.shape === 'wedge' || car.shape === 'gt') {
+      const bar = new T.Mesh(new T.BoxGeometry(0.05, 0.07, Wd * 0.82), MAT.tail);
+      bar.position.set(rearX - 0.005, tailY, 0); g.add(bar);
+    } else {
+      for (const s of [-1, 1]) {
+        const tl = new T.Mesh(new T.BoxGeometry(0.05, car.shape === 'suv' ? 0.36 : 0.22, 0.24), MAT.tail);
+        tl.position.set(rearX - 0.005, tailY, s * (Wd / 2 - 0.26)); g.add(tl);
+      }
+    }
+    const exhausts = [];
+    const exZ = car.shape === 'wedge' ? [-0.12, 0.12] : [-(Wd / 2 - 0.45), Wd / 2 - 0.45];
+    for (const z of exZ) {
+      const ex = new T.Mesh(new T.CylinderGeometry(0.06, 0.06, 0.2, 12), MAT.chrome);
+      ex.rotation.z = Math.PI / 2; ex.position.set(rearX - 0.02, yb + 0.12, z); g.add(ex);
+      const fl = new T.Mesh(new T.ConeGeometry(0.11, 1, 10, 1, true), MAT.flame);
+      fl.rotation.z = Math.PI / 2; fl.position.set(rearX - 0.6, yb + 0.12, z); fl.visible = false; g.add(fl);
+      exhausts.push(fl);
+    }
+    const frontX = L / 2 + 0.06;
+    for (const s of [-1, 1]) {
+      const hl = new T.Mesh(new T.BoxGeometry(0.06, 0.07, 0.42), MAT.head);
+      hl.position.set(frontX - 0.04, clamp(0.33 * Hh, yb + 0.12, Hh * 0.55), s * (Wd / 2 - 0.36)); g.add(hl);
+    }
+    if (P.splitter) {
+      const sp = new T.Mesh(new T.BoxGeometry(0.3, 0.04, Wd * 0.94), MAT.black);
+      sp.position.set(L / 2 - 0.05, yb - 0.02, 0); g.add(sp);
+    }
+    if (P.wing) {
+      const wing = new T.Mesh(new T.BoxGeometry(0.42, 0.05, Wd * 0.96), trimMat);
+      wing.position.set(-L / 2 + 0.25, 0.86 * Hh, 0); wing.castShadow = true; g.add(wing);
+      for (const s of [-1, 1]) {
+        const st = new T.Mesh(new T.BoxGeometry(0.08, 0.26 * Hh, 0.04), MAT.black);
+        st.position.set(-L / 2 + 0.3, 0.73 * Hh, s * 0.5); g.add(st);
+        const ep = new T.Mesh(new T.BoxGeometry(0.5, 0.18, 0.03), trimMat);
+        ep.position.set(-L / 2 + 0.25, 0.86 * Hh, s * Wd * 0.48); g.add(ep);
+      }
+    }
+    if (P.ducktail) {
+      const dt = new T.Mesh(new T.BoxGeometry(0.3, 0.05, Wd * 0.8), trimMat);
+      dt.position.set(-L / 2 + 0.1, 0.62 * Hh, 0); dt.rotation.z = 0.25; g.add(dt);
+    }
+    if (P.rack) {
+      for (const s of [-1, 1]) {
+        const rail = new T.Mesh(new T.BoxGeometry(L * 0.5, 0.05, 0.05), MAT.chrome);
+        rail.position.set(-L * 0.1, Hh + 0.07, s * Wd * 0.3); g.add(rail);
+      }
+    }
+    // Tekerlekler
+    const wheels = [];
+    const tireW = car.shape === 'mini' ? 0.24 : 0.32;
+    for (const x of [xr, xf]) {
+      for (const s of [-1, 1]) {
+        const w = new T.Group();
+        const tire = new T.Mesh(new T.CylinderGeometry(wr, wr, tireW, 28), MAT.tire);
+        tire.rotation.x = Math.PI / 2; tire.castShadow = true; w.add(tire);
+        const rim = new T.Mesh(new T.CylinderGeometry(wr * 0.66, wr * 0.66, tireW + 0.012, 24), MAT.rim);
+        rim.rotation.x = Math.PI / 2; w.add(rim);
+        for (let k = 0; k < 5; k++) {
+          const sp = new T.Mesh(new T.BoxGeometry(wr * 1.2, wr * 0.16, 0.02), MAT.black);
+          sp.position.z = s * (tireW / 2 + 0.008); sp.rotation.z = (k / 5) * Math.PI; w.add(sp);
+        }
+        w.position.set(x, wr, s * (Wd / 2 - tireW / 2 - 0.04));
+        g.add(w); wheels.push(w);
+      }
+    }
+    return { group: g, wheels, exhausts, car };
+  }
+  const carModels = CARS.map(buildCar);
+  const carRoot = new T.Group();
+  scene.add(carRoot);
+  let activeCar = null;
+  function useCar(i) {
+    if (activeCar) carRoot.remove(activeCar.group);
+    activeCar = carModels[i];
+    carRoot.add(activeCar.group);
+  }
+
+  // Garaj döner platformu
+  const SHOW_X = hill.xFlat + 75;
+  const showY = trackY(SHOW_X);
+  const turntable = new T.Group();
+  {
+    const disc = new T.Mesh(new T.CylinderGeometry(3.6, 3.8, 0.16, 64), new T.MeshStandardMaterial({ color: lin(0x16213a), roughness: 0.35, metalness: 0.6 }));
+    disc.position.y = 0.08; disc.receiveShadow = true; turntable.add(disc);
+    const ring = new T.Mesh(new T.TorusGeometry(3.7, 0.05, 8, 96), new T.MeshStandardMaterial({ color: lin(0xf5b700), emissive: lin(0xf5b700), emissiveIntensity: 1.4 }));
+    ring.rotation.x = Math.PI / 2; ring.position.y = 0.17; turntable.add(ring);
+    turntable.position.set(SHOW_X, showY, 0);
+    scene.add(turntable);
+  }
+
+  // ---------- Parçacıklar ----------
+  const snowTex = textTexture(64, 64, (g, w, h) => {
+    const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.4, 'rgba(255,255,255,0.7)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  });
+  const PS = (() => {
+    const MAX = 1400;
+    const pos = new Float32Array(MAX * 3), vel = new Float32Array(MAX * 3), life = new Float32Array(MAX), age = new Float32Array(MAX);
+    for (let i = 0; i < MAX; i++) pos[i * 3 + 1] = -1e5;
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.BufferAttribute(pos, 3));
+    const pts = new T.Points(g, new T.PointsMaterial({ map: snowTex, size: 0.55, transparent: true, depthWrite: false, opacity: 0.9 }));
+    pts.frustumCulled = false;
+    scene.add(pts);
+    let head = 0;
+    return {
+      spawn(x, y, z, vx, vy, vz, l) {
+        const i = head; head = (head + 1) % MAX;
+        pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+        vel[i * 3] = vx; vel[i * 3 + 1] = vy; vel[i * 3 + 2] = vz;
+        life[i] = l; age[i] = 0;
+      },
+      update(dt) {
+        for (let i = 0; i < MAX; i++) {
+          if (life[i] <= 0) continue;
+          age[i] += dt;
+          if (age[i] > life[i]) { life[i] = 0; pos[i * 3 + 1] = -1e5; continue; }
+          vel[i * 3 + 1] -= 4 * dt;
+          const dr = 1 - 1.4 * dt;
+          vel[i * 3] *= dr; vel[i * 3 + 2] *= dr;
+          pos[i * 3] += vel[i * 3] * dt; pos[i * 3 + 1] += vel[i * 3 + 1] * dt; pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+        }
+        g.attributes.position.needsUpdate = true;
+      },
+      clear() { for (let i = 0; i < MAX; i++) { life[i] = 0; pos[i * 3 + 1] = -1e5; } },
+    };
+  })();
+  function burst(x, y, z, vx, vy, n, spread, l) {
+    for (let i = 0; i < n; i++) PS.spawn(x, y, z + (Math.random() - 0.5) * 1.6, vx + (Math.random() - 0.5) * spread, vy + Math.random() * spread * 0.6, (Math.random() - 0.5) * spread, l * (0.6 + Math.random() * 0.7));
+  }
+  const debris = (() => {
+    const N = 36;
+    const mesh = new T.InstancedMesh(new T.BoxGeometry(0.35, 0.08, 0.25), new T.MeshStandardMaterial({ color: lin(0x22252b), roughness: 0.6, metalness: 0.4 }), N);
+    mesh.castShadow = true;
+    mesh.frustumCulled = false;
+    const d = [];
+    for (let i = 0; i < N; i++) d.push({ p: new T.Vector3(0, -1e5, 0), v: new T.Vector3(), r: new T.Euler(), w: new T.Vector3(), on: false });
+    scene.add(mesh);
+    const m4 = new T.Matrix4(), q = new T.Quaternion(), one = new T.Vector3(1, 1, 1);
+    let head = 0;
+    return {
+      spawn(x, y, vx, vy, n, color) {
+        if (color) mesh.material.color.copy(color);
+        for (let k = 0; k < n; k++) {
+          const o = d[head]; head = (head + 1) % N;
+          o.on = true; o.p.set(x, y, (Math.random() - 0.5) * 2);
+          o.v.set(vx + (Math.random() - 0.5) * 12, vy + Math.random() * 9, (Math.random() - 0.5) * 10);
+          o.w.set(Math.random() * 12, Math.random() * 12, Math.random() * 12);
+        }
+      },
+      update(dt) {
+        for (let i = 0; i < N; i++) {
+          const o = d[i];
+          if (o.on) {
+            o.v.y -= 9.81 * dt; o.p.addScaledVector(o.v, dt);
+            const gy = terrainY(o.p.x, o.p.z);
+            if (o.p.y < gy) { o.p.y = gy; o.v.y = Math.abs(o.v.y) * 0.25; o.v.x *= 0.6; o.v.z *= 0.6; o.w.multiplyScalar(0.6); }
+            o.r.x += o.w.x * dt; o.r.y += o.w.y * dt; o.r.z += o.w.z * dt;
+          }
+          q.setFromEuler(o.r); m4.compose(o.p, q, one); mesh.setMatrixAt(i, m4);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+      },
+      clear() { for (const o of d) { o.on = false; o.p.set(0, -1e5, 0); } },
+    };
+  })();
+  const flakes = (() => {
+    const N = mobile ? 900 : 1600, BX = 90, BY = 50, BZ = 70;
+    const pos = new Float32Array(N * 3), seed = new Float32Array(N);
+    for (let i = 0; i < N; i++) { pos[i * 3] = Math.random() * BX; pos[i * 3 + 1] = Math.random() * BY; pos[i * 3 + 2] = Math.random() * BZ; seed[i] = Math.random(); }
+    const g = new T.BufferGeometry();
+    const render = new Float32Array(N * 3);
+    g.setAttribute('position', new T.BufferAttribute(render, 3));
+    const pts = new T.Points(g, new T.PointsMaterial({ map: snowTex, size: 0.14, transparent: true, depthWrite: false, opacity: 0.8 }));
+    pts.frustumCulled = false;
+    scene.add(pts);
+    const wrap = (v, o, s) => ((((v - o) % s) + s) % s) + o;
+    return {
+      update(dt, t, cam) {
+        const ox = cam.x - BX / 2, oy = cam.y - BY / 2, oz = cam.z - BZ / 2;
+        for (let i = 0; i < N; i++) {
+          pos[i * 3 + 1] -= (1.2 + seed[i]) * dt;
+          pos[i * 3] += Math.sin(t * 0.7 + seed[i] * 20) * 0.4 * dt;
+          render[i * 3] = wrap(pos[i * 3], ox, BX);
+          render[i * 3 + 1] = wrap(pos[i * 3 + 1], oy, BY);
+          render[i * 3 + 2] = wrap(pos[i * 3 + 2], oz, BZ);
+        }
+        g.attributes.position.needsUpdate = true;
+      },
+    };
+  })();
+
+  // ---------- Kayıtlar ----------
   const STORE_KEY = 'sj-records-v1';
   function loadRecords() {
     try { const v = JSON.parse(localStorage.getItem(STORE_KEY)); if (v && v.list) return v; } catch (e) { /* yok */ }
@@ -24,151 +818,11 @@
 
   const G = {
     phase: 'menu', carIdx: 0, run: null, wind: 0,
-    cam: { x: 120, y: -40, s: 6, shake: 0 },
-    particles: [], acc: 0, last: 0, slow: 1, slowT: 0,
-    records: loadRecords(), evIdx: 0, flags: {}, wheelRot: 0, wheelSpin: 0,
-    resultAt: 0, countT: 0, menuT: 0, lastScore: null,
+    acc: 0, last: 0, t: 0, slow: 1, slowT: 0, shake: 0,
+    records: loadRecords(), evIdx: 0, flags: {}, wheelRot: 0, wheelSpin: 0, roll: 0, rollW: 0,
+    countT: 0, toBeat: null, fov: 52,
   };
-
-  // ---------- Ekran ----------
-  let W = 0, H = 0, DPR = 1;
-  function resize() {
-    DPR = Math.min(2, window.devicePixelRatio || 1);
-    W = cv.clientWidth; H = cv.clientHeight;
-    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
-  }
-  window.addEventListener('resize', resize);
-  resize();
-
-  const sx = (x) => (x - G.cam.x) * G.cam.s + W / 2;
-  const sy = (y) => H / 2 - (y - G.cam.y) * G.cam.s;
-
-  // ---------- Dekor (bir kez üretilir) ----------
-  function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
-  const R = rng(7);
-  const backY = (x) => hill.y(x) + 7 + 4 * Math.sin(x * 0.013) + 2.2 * Math.sin(x * 0.051 + 1);
-  const trees = [];
-  for (let x = -60; x < hill.xEnd; x += 5 + R() * 11) {
-    if (x > hill.xFlat - 20 && x < hill.xFlat + 160) continue; // seyirci alanı
-    trees.push({ x, up: 2 + R() * 7, h: 5 + R() * 6, w: 0.42 + R() * 0.12, c: R() < 0.5 ? COLORS.pine : COLORS.pine2 });
-  }
-  const crowd = [];
-  const crowdCols = ['#e1342a', '#f5b700', '#2058c9', '#f5f8fb', '#29cc63', '#0d1b33', '#ff7a1a'];
-  for (let i = 0; i < 260; i++) {
-    const x = hill.xFlat - 10 + R() * 170;
-    crowd.push({ x, up: 1.2 + R() * 4.5, c: crowdCols[Math.floor(R() * crowdCols.length)], ph: R() * 6.28, flag: R() < 0.06 });
-  }
-  const boards = [];
-  const boardText = ['SUPERCAR JUMPING', 'KARTAL TEPE', 'NİTRO+', 'SON GAZ', 'K-' + hill.K];
-  for (let s = 30, i = 0; s < hill.HS + 40; s += 46, i++) boards.push({ x: hill.xAtArc(s), text: boardText[i % boardText.length], dark: i % 2 === 0 });
-  function makeRange(seed, n, hMin, hMax) {
-    const r = rng(seed); const pts = [];
-    for (let i = 0; i <= n; i++) pts.push(hMin + r() * (hMax - hMin) * (i % 2 ? 0.55 : 1));
-    return pts;
-  }
-  const mtnFar = makeRange(3, 24, 60, 170);
-  const mtnNear = makeRange(11, 30, 40, 120);
-
-  // ---------- Araba çizimi ----------
-  const SHAPES = {
-    wedge: {
-      body: [[-0.5, 0.2], [-0.5, 0.56], [-0.36, 0.63], [-0.12, 0.96], [0.08, 0.96], [0.3, 0.56], [0.5, 0.33], [0.5, 0.17]],
-      glass: [[-0.1, 0.9], [0.06, 0.9], [0.22, 0.6], [-0.22, 0.63]],
-      wing: true,
-    },
-    gt: {
-      body: [[-0.5, 0.22], [-0.49, 0.6], [-0.3, 0.67], [-0.14, 0.96], [0.1, 0.96], [0.23, 0.67], [0.5, 0.52], [0.5, 0.2]],
-      glass: [[-0.13, 0.9], [0.08, 0.9], [0.18, 0.68], [-0.27, 0.67]],
-    },
-    suv: {
-      body: [[-0.5, 0.2], [-0.5, 0.9], [-0.42, 0.99], [0.16, 0.99], [0.31, 0.66], [0.5, 0.58], [0.5, 0.2]],
-      glass: [[-0.45, 0.91], [0.13, 0.91], [0.26, 0.68], [-0.45, 0.68]],
-      rack: true,
-    },
-    mini: {
-      body: [[-0.5, 0.2], [-0.5, 0.86], [-0.42, 0.99], [0.22, 0.99], [0.38, 0.63], [0.5, 0.56], [0.5, 0.2]],
-      glass: [[-0.44, 0.91], [0.2, 0.91], [0.33, 0.65], [-0.44, 0.65]],
-    },
-  };
-
-  // Yerel koordinat: metre, y yukarı, orijin aracın alt-orta noktası
-  function drawCarLocal(c, car, wheelRot, nitroOn) {
-    const sh = SHAPES[car.shape];
-    const L = car.len, Hh = car.h;
-    const P = (p) => [p[0] * L, p[1] * Hh];
-    c.lineJoin = 'round';
-    if (nitroOn) {
-      const fl = 0.9 + Math.random() * 0.9;
-      const g = c.createLinearGradient(-L / 2, 0, -L / 2 - fl * 1.6, 0);
-      g.addColorStop(0, 'rgba(255,255,255,0.95)'); g.addColorStop(0.3, 'rgba(120,190,255,0.9)'); g.addColorStop(1, 'rgba(60,120,255,0)');
-      c.fillStyle = g;
-      c.beginPath(); c.moveTo(-L / 2, Hh * 0.28); c.lineTo(-L / 2 - fl * 1.6, Hh * 0.33); c.lineTo(-L / 2, Hh * 0.4); c.fill();
-    }
-    // Gövde
-    c.fillStyle = car.color;
-    c.beginPath(); sh.body.forEach((p, i) => { const [x, y] = P(p); i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.closePath(); c.fill();
-    // Alt gölge
-    c.fillStyle = 'rgba(0,0,0,0.22)';
-    c.fillRect(-L / 2, Hh * 0.17, L, Hh * 0.1);
-    // Şerit
-    c.fillStyle = car.trim;
-    c.fillRect(-L * 0.48, Hh * 0.42, L * 0.96, Hh * 0.06);
-    // Cam
-    c.fillStyle = '#1a2a40';
-    c.beginPath(); sh.glass.forEach((p, i) => { const [x, y] = P(p); i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.closePath(); c.fill();
-    c.fillStyle = 'rgba(255,255,255,0.28)';
-    const g0 = P(sh.glass[0]), g1 = P(sh.glass[1]);
-    c.beginPath(); c.moveTo(g0[0] + 0.1, g0[1] - 0.04); c.lineTo(g0[0] + (g1[0] - g0[0]) * 0.45, g0[1] - 0.04); c.lineTo(g0[0] + 0.05, g0[1] - Hh * 0.18); c.closePath(); c.fill();
-    // Kanat / tavan rafı
-    if (sh.wing) {
-      c.fillStyle = car.trim;
-      c.fillRect(-L * 0.5, Hh * 0.72, L * 0.16, Hh * 0.06);
-      c.fillRect(-L * 0.44, Hh * 0.58, L * 0.025, Hh * 0.15);
-    }
-    if (sh.rack) {
-      c.fillStyle = car.trim;
-      c.fillRect(-L * 0.4, Hh * 1.0, L * 0.5, Hh * 0.04);
-      c.fillRect(-L * 0.36, Hh * 0.98, L * 0.02, Hh * 0.04);
-      c.fillRect(0.0, Hh * 0.98, L * 0.02, Hh * 0.04);
-    }
-    // Farlar
-    c.fillStyle = '#fff6c8'; c.fillRect(L * 0.47, Hh * 0.3, L * 0.03, Hh * 0.08);
-    c.fillStyle = '#ff3b2f'; c.fillRect(-L * 0.5, Hh * 0.46, L * 0.025, Hh * 0.1);
-    // Tekerlekler
-    for (const wx of [-car.wb / 2, car.wb / 2]) {
-      const r = car.wr;
-      c.fillStyle = '#111';
-      c.beginPath(); c.arc(wx, r, r * 1.06, 0, Math.PI * 2); c.fill();
-      c.fillStyle = '#9aa6b4';
-      c.beginPath(); c.arc(wx, r, r * 0.58, 0, Math.PI * 2); c.fill();
-      c.strokeStyle = '#3a4350'; c.lineWidth = r * 0.14;
-      for (let k = 0; k < 5; k++) {
-        const a = -wheelRot + k * Math.PI * 2 / 5;
-        c.beginPath(); c.moveTo(wx, r); c.lineTo(wx + Math.cos(a) * r * 0.55, r + Math.sin(a) * r * 0.55); c.stroke();
-      }
-    }
-  }
-
-  // ---------- Parçacıklar ----------
-  function puff(x, y, vx, vy, n, color, size, life, spread) {
-    for (let i = 0; i < n; i++) {
-      G.particles.push({
-        x, y, vx: vx + (Math.random() - 0.5) * spread, vy: vy + Math.random() * spread * 0.6,
-        life: life * (0.6 + Math.random() * 0.6), age: 0, size: size * (0.6 + Math.random() * 0.8), color, grav: color === 'debris' ? 1 : 0.25,
-      });
-    }
-    if (G.particles.length > 700) G.particles.splice(0, G.particles.length - 700);
-  }
-  function updateParticles(dt) {
-    for (const p of G.particles) {
-      p.age += dt;
-      p.vy -= 9.81 * p.grav * dt;
-      p.vx *= 1 - 1.2 * dt; p.vy *= 1 - 0.6 * dt;
-      p.x += p.vx * dt; p.y += p.vy * dt;
-      if (p.color === 'debris' && p.y < hill.y(p.x)) { p.y = hill.y(p.x); p.vy = Math.abs(p.vy) * 0.3; p.vx *= 0.6; }
-    }
-    G.particles = G.particles.filter((p) => p.age < p.life);
-  }
+  const camState = { pos: new T.Vector3(SHOW_X + 8, showY + 3, 6), look: new T.Vector3(SHOW_X, showY + 1, 0), heading: 0, off: new T.Vector3(), lookOff: new T.Vector3() };
 
   // ---------- Ses ----------
   const A = { ctx: null, on: true };
@@ -235,8 +889,7 @@
     tickerTimer = dur || 2.8;
   }
 
-  // ---------- Menü ----------
-  const carsEl = $('cars');
+  // ---------- Garaj ----------
   const maxPW = Math.max(...CARS.map((c) => c.power / c.mass));
   const maxGlide = Math.max(...CARS.map((c) => c.cla / c.mass));
   const maxMass = Math.max(...CARS.map((c) => c.mass));
@@ -245,81 +898,72 @@
     const l = G.records.list.filter((e) => e.car === id && !e.crashed);
     return l.length ? l.reduce((a, b) => (b.dist > a.dist ? b : a)) : null;
   }
-  function renderCars() {
-    carsEl.innerHTML = '';
-    CARS.forEach((car, i) => {
-      const b = document.createElement('button');
-      b.type = 'button'; b.className = 'car'; b.id = 'car-' + car.id;
-      b.setAttribute('aria-pressed', String(i === G.carIdx));
-      const pb = bestFor(car.id);
-      const stat = (label, v) => `<div class="stat"><span>${label}</span><span class="bar"><b style="width:${Math.round(v * 100)}%"></b></span></div>`;
-      b.innerHTML = `<canvas width="240" height="96"></canvas>
-        <span class="car-cls">${car.cls}</span>
-        <span class="car-name">${car.name}</span>
-        <span class="car-desc">${car.desc}</span>
-        <div class="stats">
-          ${stat('Güç/ağırlık', car.power / car.mass / maxPW)}
-          ${stat('Ağırlık', car.mass / maxMass)}
-          ${stat('Süzülme', car.cla / car.mass / maxGlide)}
-          ${stat('Dayanıklılık', car.crashVn / maxTough)}
-        </div>
-        <span class="car-pb">${pb ? 'En iyi: ' + pb.dist.toFixed(1) + ' m' : 'Henüz atlamadı'} · ${car.mass} kg</span>`;
-      b.addEventListener('click', () => { G.carIdx = i; renderCars(); });
-      carsEl.appendChild(b);
-      const c = b.querySelector('canvas').getContext('2d');
-      const sc = 240 / 6.4;
-      c.setTransform(sc, 0, 0, -sc, 120, 86);
-      c.fillStyle = 'rgba(13,27,51,0.12)';
-      c.fillRect(-3, -0.12, 6, 0.12);
-      drawCarLocal(c, car, 0.4, false);
-    });
+  function bestDistance() {
+    const l = G.records.list.filter((e) => !e.crashed);
+    return l.length ? Math.max(...l.map((e) => e.dist)) : null;
   }
-  function renderBoard() {
-    const el = $('board');
-    const list = G.records.list.filter((e) => !e.crashed).slice().sort((a, b) => b.total - a.total).slice(0, 6);
-    if (!list.length) { el.innerHTML = '<div class="board-empty">Henüz kayıt yok. İlk atlayışın bu tabloya yazılır.</div>'; return; }
-    el.innerHTML = list.map((e, i) => {
-      const car = CARS.find((c) => c.id === e.car);
-      return `<div class="board-row"><span class="rk">${i + 1}</span><span class="nm">${car ? car.name : e.car}</span><span class="ds">${e.dist.toFixed(1)} m</span><span class="tt">${e.total.toFixed(1)}</span></div>`;
-    }).join('');
+  function renderGarage() {
+    const car = CARS[G.carIdx];
+    $('carCls').textContent = car.cls;
+    $('carName').textContent = car.name;
+    $('carDesc').textContent = car.desc;
+    $('dots').innerHTML = CARS.map((_, i) => `<i class="${i === G.carIdx ? 'on' : ''}"></i>`).join('');
+    const stat = (label, val, v) => `<div class="stat"><div class="stat-row"><span>${label}</span><b>${val}</b></div><span class="bar"><b style="width:${Math.round(v * 100)}%"></b></span></div>`;
+    $('carStats').innerHTML =
+      stat('Güç', Math.round(car.power / 745.7) + ' hp', car.power / car.mass / maxPW) +
+      stat('Ağırlık', car.mass + ' kg', car.mass / maxMass) +
+      stat('Süzülme', Math.round((car.cla / car.mass) / maxGlide * 10) + '/10', car.cla / car.mass / maxGlide) +
+      stat('Dayanıklılık', Math.round(car.crashVn / maxTough * 10) + '/10', car.crashVn / maxTough);
+    const pb = bestFor(car.id);
+    $('carPb').textContent = pb ? `En iyi: ${pb.dist.toFixed(1)} m` : 'Henüz atlamadı';
+    const top = G.records.list.filter((e) => !e.crashed).sort((a, b) => b.total - a.total)[0];
+    const leader = $('leader');
+    leader.hidden = !top;
+    if (top) { const c = CARS.find((x) => x.id === top.car); leader.textContent = `Lider: ${top.dist.toFixed(1)} m · ${c ? c.name : top.car} · ${top.total.toFixed(1)} puan`; }
+    useCar(G.carIdx);
   }
+  function stepCar(d) { G.carIdx = (G.carIdx + d + CARS.length) % CARS.length; renderGarage(); }
+  $('prevCar').addEventListener('click', (e) => { e.stopPropagation(); stepCar(-1); });
+  $('nextCar').addEventListener('click', (e) => { e.stopPropagation(); stepCar(1); });
   $('menuHill').textContent = `${hill.cfg.name} · K-${hill.K} · HS-${hill.HS}`;
   $('hudHill').textContent = `${hill.cfg.name} · HS${hill.HS}`;
-  renderCars(); renderBoard();
 
   // ---------- Akış ----------
   function showMenu() {
     G.phase = 'menu';
     G.run = null;
     $('menu').hidden = false; $('result').hidden = true; $('hud').hidden = true;
-    renderCars(); renderBoard();
-  }
-  function bestDistance() {
-    const l = G.records.list.filter((e) => !e.crashed);
-    return l.length ? Math.max(...l.map((e) => e.dist)) : null;
+    turntable.visible = true;
+    beat.set(null);
+    PS.clear(); debris.clear();
+    renderGarage();
   }
   function startRun() {
     initAudio();
     const car = CARS[G.carIdx];
+    useCar(G.carIdx);
     G.wind = Math.round((Math.random() * 5.2 - 2.6) * 10) / 10;
     G.run = SJ.newRun(car, hill, G.wind);
-    G.evIdx = 0; G.flags = {}; G.particles = []; G.slow = 1; G.slowT = 0; G.wheelRot = 0; G.wheelSpin = 0;
+    G.evIdx = 0; G.flags = {}; G.slow = 1; G.slowT = 0; G.wheelRot = 0; G.wheelSpin = 0; G.roll = 0; G.rollW = 0; G.acc = 0;
+    PS.clear(); debris.clear();
     G.toBeat = bestDistance();
+    beat.set(G.toBeat);
+    turntable.visible = false;
     G.phase = 'ready';
     $('menu').hidden = true; $('result').hidden = true; $('hud').hidden = false;
     $('hudCar').textContent = car.name;
     $('hudDist').hidden = true;
     $('meter').hidden = true;
     $('meterTap').hidden = true;
-    const beat = $('hudBeat');
-    beat.hidden = G.toBeat === null;
-    if (G.toBeat !== null) beat.textContent = `Geçilecek: ${G.toBeat.toFixed(1)} m`;
+    const bt = $('hudBeat');
+    bt.hidden = G.toBeat === null;
+    if (G.toBeat !== null) bt.textContent = `Geçilecek: ${G.toBeat.toFixed(1)} m`;
     const head = G.wind < 0;
     $('hudWind').className = 'wind ' + (head ? 'head' : 'tail');
     $('windVal').textContent = `${Math.abs(G.wind).toFixed(1)} m/s ${head ? 'önden' : 'arkadan'}`;
     $('windArrow').setAttribute('transform', head ? 'rotate(180 13 7)' : '');
-    const cc = carCenter(G.run);
-    G.cam.x = cc.x + 8; G.cam.y = cc.y - 2; G.cam.s = baseScale();
+    snapCamera();
+    G.fov = 58;
     setPrompt('Hazır olunca ekrana dokun', false);
     say(`${car.name} start kapısında. Rüzgâr ${Math.abs(G.wind).toFixed(1)} metre ${head ? 'önden, atlayış için iyi haber' : 'arkadan, işi zor'}.`, 4);
   }
@@ -328,11 +972,10 @@
     if (p.textContent !== text) p.textContent = text;
     p.classList.toggle('hot', !!hot);
   }
-
   $('goBtn').addEventListener('click', (e) => { e.stopPropagation(); startRun(); });
 
   // ---------- Giriş ----------
-  function isUi(t) { return t.closest && t.closest('button, .overlay'); }
+  const isUi = (t) => t.closest && t.closest('button, summary, details, .garage, #result');
   function down() {
     initAudio();
     if (G.phase === 'ready') { G.phase = 'count'; G.countT = 0; $('lights').hidden = false; return; }
@@ -343,14 +986,17 @@
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', up);
   window.addEventListener('keydown', (e) => {
-    if (e.code !== 'Space' || e.repeat) return;
-    if (G.phase === 'menu') return;
-    if (G.phase === 'result') return;
+    if (G.phase === 'menu') {
+      if (e.code === 'ArrowLeft') stepCar(-1);
+      else if (e.code === 'ArrowRight') stepCar(1);
+      return;
+    }
+    if (e.code !== 'Space' || e.repeat || G.phase === 'result') return;
     e.preventDefault(); down();
   });
   window.addEventListener('keyup', (e) => { if (e.code === 'Space') up(); });
 
-  // ---------- Olaylar ve spiker ----------
+  // ---------- Olaylar ----------
   function carCenter(r) {
     if (r.mode === 'wreck') return { x: r.x, y: r.y };
     return { x: r.x - Math.sin(r.phi) * r.car.h / 2, y: r.y + Math.cos(r.phi) * r.car.h / 2 };
@@ -363,12 +1009,10 @@
       switch (e.type) {
         case 'nitro': say(pick(['Nitro açıldı! Motor bağırıyor!', 'Ve nitro! Mavi alev arkada!', 'Nitroya bastı, hız tavan yapıyor!']), 2.2); break;
         case 'bumpAir': if (e.speed > 25 && !G.flags.bumpSaid) { G.flags.bumpSaid = true; say(pick(['Engebede havalandı!', 'Tümsek onu fırlattı, dikkat!', 'Pist engebeli, araba zıplıyor!'])); } break;
-        case 'bumpLand': {
-          const p = carCenter(r);
-          puff(p.x, hill.y(p.x), r.v * 0.3, 2, 14, 'snow', 0.5, 0.9, 4);
-          if (e.crash) { /* aşağıda crash olayı */ } else if (e.diff > 10 || e.vn > 5) { say(pick(['Sert indi, hız kaybediyor!', 'Burun yere vurdu, değerli km/sa gidiyor.'])); thump(0.5); }
+        case 'bumpLand':
+          burst(r.x, hill.y(r.x) + 0.2, 0, r.v * 0.5, 2, 18, 5, 0.9);
+          if (!e.crash && (e.diff > 10 || e.vn > 5)) { say(pick(['Sert indi, hız kaybediyor!', 'Burun yere vurdu, değerli km/sa gidiyor.'])); thump(0.5); G.shake = 0.3; }
           break;
-        }
         case 'takeoff': {
           const kmh = Math.round(e.speed * 3.6);
           let line;
@@ -377,18 +1021,16 @@
           else if (e.q > 0.5) line = `İyi zamanlama, ${kmh} km/sa ile havada.`;
           else line = `Biraz erken bastı. ${kmh} km/sa ile havalandı.`;
           say(line, 2.6);
-          G.flags.takeoffQ = e.q;
-          G.slow = 0.45; G.slowT = 0.5;
+          G.slow = 0.4; G.slowT = 0.55;
           const tap = $('meterTap');
           if (r.tapX !== null) { tap.hidden = false; tap.style.left = clamp(100 - (hill.TO - r.tapX) / 120 * 100, 0, 100) + '%'; }
           break;
         }
         case 'late': say('Geç bastı! Kenarı kaçırdı, zayıf bir itiş.'); break;
         case 'land': {
-          const p = carCenter(r);
           const strength = clamp(e.vn / car.crashVn, 0, 1.5);
-          puff(p.x, hill.y(p.x), r.vx * 0.4, 3 + e.vn * 0.4, 40, 'snow', 0.7, 1.3, 8);
-          G.cam.shake = 0.25 + strength * 0.6;
+          burst(r.x, hill.y(r.x) + 0.3, 0, r.vx * 0.5, 3 + e.vn * 0.5, 70, 9, 1.4);
+          G.shake = 0.3 + strength * 0.7;
           thump(strength);
           if (!e.crash) {
             if (e.diff < 6 && e.vn < 6) say(pick(['Yumuşacık iniş! Hakemler bunu sever.', 'Telemark gibi! Dört teker aynı anda!', 'Kusursuz iniş, tüy gibi!']), 3);
@@ -399,19 +1041,19 @@
         }
         case 'crash': {
           const p = carCenter(r);
-          for (let i = 0; i < 4; i++) puff(p.x, p.y, r.vx * 0.5, 4, 8, 'debris', 0.35, 2.4, 10);
-          puff(p.x, p.y, r.vx * 0.3, 4, 50, 'snow', 0.9, 1.5, 10);
-          G.cam.shake = 1.2; G.slow = 0.35; G.slowT = 0.9;
+          debris.spawn(p.x, p.y, r.vx * 0.6, 4, 22, lin(car.color));
+          burst(p.x, p.y, 0, r.vx * 0.4, 4, 120, 12, 1.6);
+          G.shake = 1.4; G.slow = 0.3; G.slowT = 1.0;
+          G.rollW = (Math.random() < 0.5 ? -1 : 1) * (4 + Math.random() * 4);
           thump(1.5);
           say(r.dnf ? 'Ve kaza! İnişte kontrolü kaybetti, diskalifiye!' : pick(['Ve kaza! Araç takla atıyor!', 'Olamaz! Sert iniş, araba paramparça!', 'Kaza! Mesafe sayılır ama stil puanı uçtu.']), 3.5);
           break;
         }
-        case 'impact': { const p = carCenter(r); puff(p.x, p.y, r.vx * 0.3, 3, 14, 'snow', 0.6, 1, 6); puff(p.x, p.y, r.vx * 0.4, 3, 3, 'debris', 0.25, 2, 7); thump(clamp(e.hit / 15, 0.2, 1)); break; }
+        case 'impact': { const p = carCenter(r); burst(p.x, p.y - 0.4, 0, r.vx * 0.3, 3, 30, 7, 1.1); debris.spawn(p.x, p.y, r.vx * 0.5, 3, 3); thump(clamp(e.hit / 15, 0.2, 1)); G.shake = Math.max(G.shake, 0.5); break; }
         default: break;
       }
     }
   }
-
   function flightComments(r) {
     if (!r.jumped || r.landed || r.mode !== 'air') return;
     const d = hill.arcAt(r.x);
@@ -428,10 +1070,10 @@
     const car = r.car;
     const prevBest = bestFor(car.id);
     const prevTop = G.records.list.filter((e) => !e.crashed).reduce((m, e) => Math.max(m, e.total), -1);
-    const rec = { car: car.id, dist: sc.dist, total: sc.total, crashed: r.crashed || sc.dnf, at: Date.now() };
-    if (!sc.dnf) { G.records.list.push(rec); G.records.list = G.records.list.slice(-60); saveRecords(); }
-    const isTop = !rec.crashed && !sc.dnf && sc.total > prevTop;
-    const isPb = !rec.crashed && !sc.dnf && (!prevBest || sc.dist > prevBest.dist);
+    const crashed = r.crashed || sc.dnf;
+    if (!sc.dnf) { G.records.list.push({ car: car.id, dist: sc.dist, total: sc.total, crashed, at: Date.now() }); G.records.list = G.records.list.slice(-60); saveRecords(); }
+    const isTop = !crashed && sc.total > prevTop;
+    const isPb = !crashed && (!prevBest || sc.dist > prevBest.dist);
     const tag = sc.dnf ? 'Diskalifiye' : r.crashed ? 'Kaza' : isTop ? 'Yeni lider' : isPb ? 'Kişisel rekor' : 'Sonuç';
     const tagCls = (isTop || isPb) && !r.crashed ? 'res-tag rec' : 'res-tag';
     let note;
@@ -440,12 +1082,11 @@
     else if (r.q === null) note = 'Kenarda zıplamadın. Sarı bölgede, kenara olabildiğince yakın dokun.';
     else if (sc.dist < hill.K - 60) note = 'Uçuşta daha uzun basılı tut: burun kalkınca araba süzülür.';
     else if (sc.dist > hill.HS) note = 'HS sınırının ötesi düzlük. Daha uzağa uçmak, daha sert iniş demek.';
-    else note = `Kalkış: ${r.q !== null ? Math.round(r.q * 100) + '%' : '-'} · Kenarda ${Math.round(r.edgeSpeed * 3.6)} km/sa · İniş açısı ${r.landDiff.toFixed(0)}°`;
-    if (isTop && !G.toBeat) note = 'İlk kayıt. Yeşil çizgi artık bu mesafede.';
-    const judgesHtml = sc.judges.map((j, i) => {
-      const dropped = (sc.dropped && (j === sc.dropped[0] && i === sc.judges.indexOf(sc.dropped[0]))) || (sc.dropped && j === sc.dropped[1] && i === sc.judges.lastIndexOf(sc.dropped[1]));
-      return `<span class="judge${dropped ? ' drop' : ''}">${j.toFixed(1)}</span>`;
-    }).join('');
+    else note = `Kalkış: ${Math.round(r.q * 100)}% · Kenarda ${Math.round(r.edgeSpeed * 3.6)} km/sa · İniş açısı ${r.landDiff.toFixed(0)}°`;
+    if (isTop && G.toBeat === null) note = 'İlk kayıt. Yeşil çizgi artık bu mesafede.';
+    const lo = sc.dropped ? sc.judges.indexOf(sc.dropped[0]) : -1;
+    const hi = sc.dropped ? sc.judges.lastIndexOf(sc.dropped[1]) : -1;
+    const judgesHtml = sc.judges.map((j, i) => `<span class="judge${i === lo || i === hi ? ' drop' : ''}">${j.toFixed(1)}</span>`).join('');
     const fmt = (v) => (v > 0 ? '+' : '') + v.toFixed(1);
     $('resBox').innerHTML = `
       <div class="res-head"><span class="${tagCls}">${tag}</span><span class="res-who">${car.name} · ${car.cls}</span></div>
@@ -465,344 +1106,135 @@
       </div>`}
       <div class="row res-actions">
         <button class="go" id="againBtn" type="button">Tekrar atla</button>
-        <button class="ghost" id="menuBtn" type="button">Araba değiştir</button>
+        <button class="ghost" id="menuBtn" type="button">Garaja dön</button>
       </div>`;
     $('result').hidden = false;
     $('hud').hidden = true;
     $('againBtn').addEventListener('click', (e) => { e.stopPropagation(); startRun(); });
     $('menuBtn').addEventListener('click', (e) => { e.stopPropagation(); showMenu(); });
-    setPrompt('', false);
-    $('meter').hidden = true;
   }
 
-  // ---------- Kamera ----------
-  function baseScale() { return clamp(Math.min(W * 1.5, H * 1.6) / 30, 10, 34); }
+  // ---------- Kamera: arabanın arkasında ve üstünde ----------
+  const V = new T.Vector3(), V2 = new T.Vector3();
+  const landscape = () => camera.aspect > 1.4 && canvas.clientHeight < 560;
+  function cameraTarget(r) {
+    const p = carCenter(r);
+    const sp = r.mode === 'wreck' ? Math.hypot(r.vx, r.vy) : SJ.speedOf(r);
+    let heading;
+    if (r.mode === 'ground') heading = r.phi;
+    else if (r.mode === 'air') heading = Math.atan2(r.vy, r.vx);
+    else heading = camState.heading;
+    let dist, height, ahead, lookUp, side = 0;
+    if (G.phase === 'ready' || G.phase === 'count') { dist = 8.6; height = 3.0; ahead = 18; lookUp = -1.2; }
+    else if (r.mode === 'wreck') { dist = 13; height = 6; ahead = 0; lookUp = 0; }
+    else if (r.mode === 'air' && r.jumped && !r.landed) { dist = 10 + sp * 0.02; height = 3.4 + sp * 0.012; ahead = 26; lookUp = -4.5 - (landscape() ? 2 : 0); side = 0.6; }
+    else { dist = 6.8 + sp * 0.03; height = 2.3 + sp * 0.012; ahead = 14 + sp * 0.1; lookUp = landscape() ? -2.2 : -0.6; }
+    return { p, heading, dist, height, ahead, lookUp, side, sp };
+  }
+  // Kamera arabaya göre bir ofsette durur; ofset yumuşatılır, mutlak konum değil.
+  // Böylece yüksek hızda kamera geride kalmaz.
+  const OFF = new T.Vector3(), LOFF = new T.Vector3();
+  function placeCamera(c, kPos, kLook, kHead) {
+    camState.heading += (c.heading - camState.heading) * kHead;
+    const hx = Math.cos(camState.heading), hy = Math.sin(camState.heading);
+    V.set(c.p.x - hx * c.dist, c.p.y - hy * c.dist + c.height, c.side * c.dist * 0.3);
+    const floor = terrainY(V.x, V.z) + 1.1;
+    if (V.y < floor) V.y = floor;
+    V2.set(c.p.x + hx * c.ahead, c.p.y + hy * c.ahead + c.lookUp + 0.4, 0);
+    OFF.set(V.x - c.p.x, V.y - c.p.y, V.z);
+    LOFF.set(V2.x - c.p.x, V2.y - c.p.y, 0);
+    camState.off.lerp(OFF, kPos);
+    camState.lookOff.lerp(LOFF, kLook);
+    camState.pos.set(c.p.x + camState.off.x, c.p.y + camState.off.y, camState.off.z);
+    const fl = terrainY(camState.pos.x, camState.pos.z) + 0.9;
+    if (camState.pos.y < fl) camState.pos.y = fl;
+    camState.look.set(c.p.x + camState.lookOff.x, c.p.y + camState.lookOff.y, camState.lookOff.z);
+  }
+  function snapCamera() {
+    const c = cameraTarget(G.run);
+    camState.heading = c.heading;
+    placeCamera(c, 1, 1, 1);
+  }
   function updateCamera(dt) {
-    const cam = G.cam;
-    let tx, ty, ts;
-    const base = baseScale();
     if (G.phase === 'menu' || !G.run) {
-      G.menuT += dt;
-      const x = 40 + ((G.menuT * 14) % (hill.xFlat - 40));
-      tx = x; ty = hill.y(x) + 8; ts = base * 0.55;
+      const a = G.t * 0.22;
+      const portrait = camera.aspect < 1;
+      const R = portrait ? 10.5 : 8.4;
+      V.set(SHOW_X + Math.cos(a) * R, showY + (portrait ? 2.0 : 1.7) + Math.sin(G.t * 0.3) * 0.2, Math.sin(a) * R);
+      camState.pos.lerp(V, 1 - Math.exp(-dt * 3));
+      camState.look.lerp(V2.set(SHOW_X, showY + (portrait ? -0.9 : 0.3), 0), 1 - Math.exp(-dt * 3));
+      G.fov += ((portrait ? 58 : 46) - G.fov) * (1 - Math.exp(-dt * 2));
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (camera.aspect > 1.2) camera.setViewOffset(w, h, w * 0.2, 0, w, h); else camera.clearViewOffset();
     } else {
       const r = G.run;
-      const p = carCenter(r);
-      const sp = r.mode === 'wreck' ? Math.hypot(r.vx, r.vy) : SJ.speedOf(r);
-      const vx = r.mode === 'ground' ? r.v * Math.cos(r.phi) : r.vx;
-      if (r.mode === 'air' && r.jumped && !r.landed) {
-        const gap = Math.max(0, r.y - hill.y(r.x));
-        ts = Math.min(base * 0.7, (H * 0.42) / (gap + 12));
-        tx = p.x + Math.min(vx * 0.5, (W / ts) * 0.22);
-        ty = (p.y + hill.y(r.x + vx * 0.5)) / 2 + 2;
-      } else if (!r.jumped) {
-        ts = base * clamp(1.15 - sp / 110, 0.6, 1.15);
-        tx = p.x + Math.min(vx * 0.3, (W / ts) * 0.2);
-        ty = p.y + 1.5 + sp * 0.04;
-      } else {
-        ts = base * 0.6;
-        tx = p.x + Math.min(Math.max(vx, 0) * 0.3, (W / ts) * 0.2);
-        ty = p.y + 2;
-      }
-      if (G.phase === 'ready' || G.phase === 'count') { ts = base * 1.2; tx = p.x + 6; ty = p.y + 1; }
+      if (camera.view && camera.view.enabled) camera.clearViewOffset();
+      const c = cameraTarget(r);
+      placeCamera(c, 1 - Math.exp(-dt * 3), 1 - Math.exp(-dt * 5), 1 - Math.exp(-dt * 3.5));
+      const kmh = c.sp * 3.6;
+      const targetFov = (camera.aspect < 1 ? 70 : 58) + clamp(kmh - 80, 0, 200) * 0.07 + (r.nitro > 0 ? 4 : 0);
+      G.fov += (targetFov - G.fov) * (1 - Math.exp(-dt * 2.5));
     }
-    const k = 1 - Math.exp(-dt * 4);
-    const ks = 1 - Math.exp(-dt * 1.8);
-    cam.x += (tx - cam.x) * k;
-    cam.y += (ty - cam.y) * k;
-    cam.s += (ts - cam.s) * ks;
-    cam.shake = Math.max(0, cam.shake - dt * 1.6);
+    camera.position.copy(camState.pos);
+    if (G.shake > 0) {
+      const s = G.shake * 0.35;
+      camera.position.x += (Math.random() - 0.5) * s; camera.position.y += (Math.random() - 0.5) * s; camera.position.z += (Math.random() - 0.5) * s;
+      G.shake = Math.max(0, G.shake - dt * 1.8);
+    }
+    camera.lookAt(camState.look);
+    if (Math.abs(camera.fov - G.fov) > 0.01) { camera.fov = G.fov; camera.updateProjectionMatrix(); }
   }
 
-  // ---------- Çizim ----------
-  function drawSky() {
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, COLORS.sky1); g.addColorStop(0.55, COLORS.sky2); g.addColorStop(1, COLORS.sky3);
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-    // Güneş
-    const sunX = W * 0.78 - G.cam.x * 0.02, sunY = H * 0.2;
-    const sg = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, H * 0.35);
-    sg.addColorStop(0, 'rgba(255,248,225,0.95)'); sg.addColorStop(0.08, 'rgba(255,244,210,0.75)'); sg.addColorStop(1, 'rgba(255,244,210,0)');
-    ctx.fillStyle = sg; ctx.fillRect(0, 0, W, H);
-    drawRange(mtnFar, 0.06, COLORS.mtnFar, 0.62, 2.2);
-    drawRange(mtnNear, 0.14, COLORS.mtnNear, 0.74, 1.6);
-  }
-  function drawRange(pts, par, color, baseFrac, widthMul) {
-    const seg = Math.max(W, 600) / 8 * widthMul;
-    const period = seg * (pts.length - 1);
-    const off = (((G.cam.x * G.cam.s * par) % period) + period) % period;
-    const base = H * baseFrac + G.cam.y * G.cam.s * par * 0.25;
-    const amp = Math.min(1, H / 700);
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.moveTo(-off, H);
-    for (let rep = 0; rep < 3; rep++) {
-      for (let i = 0; i < pts.length; i++) {
-        const x = -off + rep * period + i * seg;
-        ctx.lineTo(x, base - pts[i] * amp);
-      }
+  // ---------- Arabayı sahneye yerleştir ----------
+  function syncCar(dt) {
+    const m = activeCar;
+    if (!m) return;
+    const g = m.group;
+    if (G.phase === 'menu' || !G.run) {
+      g.position.set(SHOW_X, showY + 0.16, 0);
+      g.rotation.set(0, G.t * 0.25, 0);
+      turntable.rotation.y = G.t * 0.25;
+      m.wheels.forEach((w) => { w.rotation.z = 0; });
+      m.exhausts.forEach((f) => { f.visible = false; });
+      MAT.tail.emissiveIntensity = 1.6;
+      return;
     }
-    ctx.lineTo(-off + 3 * period, H); ctx.closePath(); ctx.fill();
-    // Kar başlıkları
-    ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    for (let rep = 0; rep < 3; rep++) {
-      for (let i = 0; i < pts.length; i += 2) {
-        const x = -off + rep * period + i * seg;
-        const y = base - pts[i] * amp;
-        if (x < -seg || x > W + seg) continue;
-        const ly = base - pts[Math.max(0, i - 1)] * amp, ry = base - pts[Math.min(pts.length - 1, i + 1)] * amp;
-        ctx.beginPath(); ctx.moveTo(x, y);
-        ctx.lineTo(x - seg * 0.28, y + (ly - y) * 0.28); ctx.lineTo(x - seg * 0.1, y + (ly - y) * 0.2);
-        ctx.lineTo(x + seg * 0.05, y + (ry - y) * 0.26); ctx.lineTo(x + seg * 0.28, y + (ry - y) * 0.28);
-        ctx.closePath(); ctx.fill();
-      }
+    const r = G.run;
+    if (r.mode === 'wreck') {
+      G.roll += G.rollW * dt; G.rollW *= 1 - 0.6 * dt;
+      g.position.set(r.x + Math.sin(r.phi) * r.car.h / 2, r.y - Math.cos(r.phi) * r.car.h / 2, 0);
+    } else {
+      g.position.set(r.x, r.y, 0);
     }
-  }
-
-  function viewRange() {
-    const half = W / 2 / G.cam.s;
-    return [G.cam.x - half - 6, G.cam.x + half + 6];
-  }
-  function terrainPath(fn, x0, x1, step) {
-    ctx.beginPath(); ctx.moveTo(sx(x0), H + 10);
-    let crossed = false;
-    for (let x = x0; x <= x1; x += step) {
-      if (!crossed && x > hill.TO) {
-        crossed = true;
-        ctx.lineTo(sx(hill.TO), sy(fn(hill.TO)));
-        ctx.lineTo(sx(hill.TO + 0.01), sy(fn(hill.TO + 0.3)));
-      }
-      ctx.lineTo(sx(x), sy(fn(x)));
-    }
-    ctx.lineTo(sx(x1), sy(fn(x1)));
-    ctx.lineTo(sx(x1), H + 10); ctx.closePath();
-  }
-
-  function drawWorld(t) {
-    const [x0, x1] = viewRange();
-    const s = G.cam.s;
-    const step = Math.max(0.5, 3 / s);
-
-    // Arka yamaç ve ağaçlar
-    terrainPath(backY, x0, x1, step);
-    const bg = ctx.createLinearGradient(0, 0, 0, H);
-    bg.addColorStop(0, COLORS.back); bg.addColorStop(1, COLORS.backShade);
-    ctx.fillStyle = bg; ctx.fill();
-    for (const tr of trees) {
-      if (tr.x < x0 - 10 || tr.x > x1 + 10) continue;
-      const by = backY(tr.x) - tr.up;
-      const bx = sx(tr.x), byy = sy(by), hh = tr.h * s, ww = tr.h * tr.w * s;
-      ctx.fillStyle = tr.c;
-      ctx.beginPath(); ctx.moveTo(bx, byy - hh); ctx.lineTo(bx - ww / 2, byy); ctx.lineTo(bx + ww / 2, byy); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
-      ctx.beginPath(); ctx.moveTo(bx, byy - hh); ctx.lineTo(bx - ww * 0.16, byy - hh * 0.68); ctx.lineTo(bx + ww * 0.12, byy - hh * 0.72); ctx.closePath(); ctx.fill();
-    }
-    // Seyirciler
-    for (const c of crowd) {
-      if (c.x < x0 || c.x > x1) continue;
-      const bob = Math.abs(Math.sin(t * 6 + c.ph)) * 0.25;
-      const px = sx(c.x), py = sy(hill.y(c.x) + 0.6 + c.up + bob);
-      ctx.fillStyle = c.c;
-      ctx.fillRect(px - 0.25 * s, py - 1.0 * s, 0.5 * s, 1.0 * s);
-      ctx.beginPath(); ctx.arc(px, py - 1.2 * s, 0.22 * s, 0, Math.PI * 2); ctx.fill();
-      if (c.flag) {
-        ctx.fillStyle = COLORS.ink; ctx.fillRect(px + 0.2 * s, py - 2.6 * s, 0.06 * s, 1.6 * s);
-        ctx.fillStyle = c.c === COLORS.red ? COLORS.paper : COLORS.red;
-        const wv = Math.sin(t * 5 + c.ph) * 0.2 * s;
-        ctx.beginPath(); ctx.moveTo(px + 0.26 * s, py - 2.6 * s); ctx.lineTo(px + 1.3 * s, py - 2.4 * s + wv); ctx.lineTo(px + 0.26 * s, py - 2.0 * s); ctx.fill();
-      }
-    }
-
-    // Reklam panoları (pistin arkasında)
-    for (const b of boards) {
-      if (b.x < x0 - 12 || b.x > x1 + 12) continue;
-      const y = hill.y(b.x);
-      const bw = 10 * s, bh = 1.6 * s;
-      const px = sx(b.x) - bw / 2, py = sy(y) - bh - 0.3 * s;
-      ctx.fillStyle = b.dark ? COLORS.ink : COLORS.red;
-      ctx.fillRect(px, py, bw, bh);
-      if (bh > 9) {
-        ctx.fillStyle = COLORS.paper;
-        ctx.font = `700 ${Math.round(bh * 0.62)}px "Saira Condensed", "Arial Narrow", sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(b.text, px + bw / 2, py + bh / 2 + 1);
-      }
-    }
-
-    // Ana pist
-    terrainPath(hill.y, x0, x1, step);
-    const tg = ctx.createLinearGradient(0, sy(G.cam.y + 10), 0, sy(G.cam.y - 60));
-    tg.addColorStop(0, COLORS.snowTop); tg.addColorStop(0.4, COLORS.snowMid); tg.addColorStop(1, COLORS.snowDeep);
-    ctx.fillStyle = tg; ctx.fill();
-
-    // Yüzey çizgisi ve buz pisti
-    ctx.lineWidth = Math.max(1.5, 0.12 * s);
-    ctx.strokeStyle = COLORS.snowLine;
-    ctx.beginPath();
-    let first = true;
-    for (let x = x0; x <= x1; x += step) {
-      if (x > hill.TO && x - step <= hill.TO) { ctx.lineTo(sx(hill.TO), sy(hill.y(hill.TO))); first = true; }
-      const X = sx(x), Y = sy(hill.y(x));
-      if (first) { ctx.moveTo(X, Y); first = false; } else ctx.lineTo(X, Y);
-    }
-    ctx.stroke();
-    if (x0 < hill.TO) {
-      ctx.strokeStyle = 'rgba(120,150,190,0.35)';
-      ctx.lineWidth = Math.max(1, 0.18 * s);
-      ctx.beginPath();
-      const end = Math.min(x1, hill.TO);
-      for (let x = Math.max(0, x0); x <= end; x += step) { const X = sx(x), Y = sy(hill.y(x) - 0.35); x === Math.max(0, x0) ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y); }
-      ctx.stroke();
-      // Kenar direkleri ve ağ (hız hissi)
-      for (let x = Math.ceil(Math.max(0, x0) / 8) * 8; x <= end; x += 8) {
-        const y = hill.y(x);
-        ctx.strokeStyle = (x / 8) % 2 ? COLORS.red : COLORS.paper;
-        ctx.lineWidth = Math.max(1.5, 0.1 * s);
-        ctx.beginPath(); ctx.moveTo(sx(x), sy(y)); ctx.lineTo(sx(x), sy(y + 1.3)); ctx.stroke();
-      }
-      ctx.strokeStyle = 'rgba(225,52,42,0.55)'; ctx.lineWidth = Math.max(1, 0.05 * s);
-      ctx.beginPath();
-      for (let x = Math.max(0, x0); x <= end; x += step) { const X = sx(x), Y = sy(hill.y(x) + 1.15); x === Math.max(0, x0) ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y); }
-      ctx.stroke();
-      // Kalkış bölgesi işareti
-      const zx0 = hill.TO - SJ.ZONE;
-      if (zx0 < x1 && hill.TO > x0) {
-        ctx.fillStyle = 'rgba(245,183,0,0.55)';
-        ctx.beginPath();
-        for (let x = zx0; x <= hill.TO; x += 0.5) { const X = sx(x), Y = sy(hill.y(x)); x === zx0 ? ctx.moveTo(X, Y) : ctx.lineTo(X, Y); }
-        for (let x = hill.TO; x >= zx0; x -= 0.5) ctx.lineTo(sx(x), sy(hill.y(x) - 0.45));
-        ctx.closePath(); ctx.fill();
-      }
-      // Kenar
-      if (hill.TO > x0 && hill.TO < x1) {
-        const ex = sx(hill.TO), ey = sy(hill.yTO);
-        ctx.fillStyle = COLORS.red;
-        ctx.fillRect(ex - 0.12 * s, ey - 2.8 * s, 0.24 * s, 2.8 * s);
-        ctx.fillStyle = COLORS.paper;
-        ctx.fillRect(ex - 0.12 * s, ey - 2.2 * s, 0.24 * s, 0.5 * s);
-        ctx.fillRect(ex - 0.12 * s, ey - 1.2 * s, 0.24 * s, 0.5 * s);
-        // Kulenin beton yüzü
-        ctx.fillStyle = '#8fa3bb';
-        ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex, sy(hill.yTO - hill.cfg.STEP)); ctx.lineTo(ex - 1.5 * s, sy(hill.yTO - hill.cfg.STEP - 1)); ctx.lineTo(ex - 1.5 * s, ey + 0.4 * s); ctx.closePath(); ctx.fill();
-      }
-    }
-
-    // İniş pisti mesafe işaretleri
-    const font = (px, w) => `${w || 700} ${Math.round(px)}px "Saira Condensed", "Arial Narrow", sans-serif`;
-    for (let d = 10; d <= hill.HS + 60; d += 10) {
-      const x = hill.xAtArc(d);
-      if (x < x0 || x > x1) continue;
-      const y = hill.y(x);
-      const th = Math.atan(hill.slope(x));
-      const nx = Math.sin(th), ny = -Math.cos(th);
-      const len = d % 50 === 0 ? 1.4 : 0.7;
-      ctx.strokeStyle = 'rgba(13,27,51,0.45)';
-      ctx.lineWidth = Math.max(1, 0.08 * s);
-      ctx.beginPath(); ctx.moveTo(sx(x), sy(y)); ctx.lineTo(sx(x + nx * len), sy(y + ny * len)); ctx.stroke();
-      if (d % 50 === 0 && s > 3) {
-        ctx.fillStyle = 'rgba(13,27,51,0.6)';
-        ctx.font = font(Math.max(11, 1.1 * s));
-        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-        ctx.fillText(String(d), sx(x + nx * 2.4), sy(y + ny * 2.4));
-      }
-    }
-    const lineAt = (d, color, label, laser) => {
-      const x = hill.xAtArc(d);
-      if (x < x0 - 5 || x > x1 + 5) return;
-      const y = hill.y(x);
-      const th = Math.atan(hill.slope(x));
-      const nx = Math.sin(th), ny = -Math.cos(th);
-      if (laser) {
-        const lg = ctx.createLinearGradient(0, sy(y), 0, sy(y + 14));
-        lg.addColorStop(0, 'rgba(41,204,99,0.55)'); lg.addColorStop(1, 'rgba(41,204,99,0)');
-        ctx.fillStyle = lg;
-        ctx.fillRect(sx(x) - 0.18 * s, sy(y + 14), 0.36 * s, 14 * s);
-      }
-      ctx.strokeStyle = color; ctx.lineWidth = Math.max(2, 0.28 * s);
-      ctx.beginPath(); ctx.moveTo(sx(x - nx * 0.2), sy(y - ny * 0.2)); ctx.lineTo(sx(x + nx * 2.2), sy(y + ny * 2.2)); ctx.stroke();
-      if (s > 2.5) {
-        ctx.fillStyle = color;
-        ctx.font = font(Math.max(12, 1.2 * s), 800);
-        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-        ctx.fillText(label, sx(x + nx * 4.2), sy(y + ny * 4.2));
-      }
-    };
-    lineAt(hill.K, COLORS.red, 'K');
-    lineAt(hill.HS, COLORS.ink, 'HS');
-    if (G.toBeat !== null && G.toBeat !== undefined && G.run) lineAt(G.toBeat, COLORS.go, G.toBeat.toFixed(1), true);
-  }
-
-  function drawCar(r) {
-    const car = r.car, s = G.cam.s;
-    // Uçuşta gölge
-    if (r.mode !== 'ground') {
-      const p = carCenter(r);
-      const gy = hill.y(p.x);
-      const gap = Math.max(0, p.y - gy);
-      const a = clamp(0.35 - gap / 120, 0.06, 0.35);
-      const w = car.len * (1 + gap / 25) * s / 2;
-      ctx.fillStyle = `rgba(13,27,51,${a})`;
-      ctx.beginPath(); ctx.ellipse(sx(p.x), sy(gy), w, Math.max(2, 0.3 * s), -Math.atan(hill.slope(p.x)), 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.save();
-    let ox = r.x, oy = r.y;
-    if (r.mode === 'wreck') { ox = r.x + Math.sin(r.phi) * car.h / 2; oy = r.y - Math.cos(r.phi) * car.h / 2; }
-    ctx.translate(sx(ox), sy(oy));
-    ctx.rotate(-r.phi);
-    ctx.scale(s, -s);
-    drawCarLocal(ctx, car, G.wheelRot, r.nitro > 0 && r.mode !== 'wreck');
-    ctx.restore();
-  }
-
-  function drawParticles() {
-    const s = G.cam.s;
-    for (const p of G.particles) {
-      const k = 1 - p.age / p.life;
-      if (p.color === 'debris') {
-        ctx.fillStyle = `rgba(30,35,45,${k})`;
-        ctx.fillRect(sx(p.x) - p.size * s / 2, sy(p.y) - p.size * s / 2, p.size * s, p.size * s * 0.6);
-      } else {
-        ctx.fillStyle = `rgba(255,255,255,${0.85 * k})`;
-        ctx.beginPath(); ctx.arc(sx(p.x), sy(p.y), Math.max(1, p.size * s * (1.4 - k * 0.6)), 0, Math.PI * 2); ctx.fill();
-      }
-    }
-  }
-
-  function drawSpeedLines(r) {
-    if (r.mode !== 'air' || !r.jumped) return;
-    const sp = Math.hypot(r.vx, r.vy);
-    const n = Math.floor(clamp((sp - 30) / 4, 0, 10));
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = 1.5;
-    const ang = Math.atan2(r.vy, r.vx);
-    for (let i = 0; i < n; i++) {
-      const y = (Math.sin(i * 91.7 + G.t * 3) * 0.5 + 0.5) * H;
-      const x = ((i * 137 - G.t * sp * 18) % W + W) % W;
-      const len = 30 + sp;
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - Math.cos(ang) * len, y + Math.sin(ang) * len); ctx.stroke();
-    }
+    g.rotation.order = 'ZXY';
+    g.rotation.set(G.roll, 0, r.phi);
+    for (const w of m.wheels) w.rotation.z = -G.wheelRot;
+    const on = r.nitro > 0 && r.mode !== 'wreck';
+    m.exhausts.forEach((f) => {
+      f.visible = on;
+      if (on) { const s = 0.7 + Math.random() * 0.7; f.scale.set(1, s * 1.6, 1); f.position.x = -r.car.len / 2 - 0.08 - s * 0.8; }
+    });
+    MAT.tail.emissiveIntensity = r.landed && r.mode === 'ground' && r.t - r.landT > 0.8 ? 5 : 1.6;
   }
 
   // ---------- HUD ----------
   function updateHud(r) {
     const sp = r.mode === 'wreck' ? 0 : SJ.speedOf(r);
     $('hudSpeed').textContent = String(Math.round(sp * 3.6));
-    const inFlight = r.jumped;
     const dEl = $('hudDist');
-    if (inFlight) {
+    if (r.jumped) {
       const d = r.landed ? Math.round(r.dist * 2) / 2 : hill.arcAt(r.x);
       dEl.hidden = false;
       $('hudDistVal').textContent = d.toFixed(1);
       dEl.classList.toggle('over', G.toBeat !== null && d > G.toBeat);
     }
-    // Kalkış göstergesi: kenardan önceki son 120 m
     const meter = $('meter');
     const toEdge = hill.TO - r.x;
     if (!r.jumped && toEdge < 120) {
       meter.hidden = false;
       $('meterZone').style.left = (100 - SJ.ZONE / 120 * 100) + '%';
-      $('meterZone').style.right = '0';
       $('meterCar').style.left = clamp(100 - toEdge / 120 * 100, 0, 100) + '%';
-    } else if (r.jumped && r.airT > 1.2) meter.hidden = true;
+    } else if (r.jumped && r.airT > 0.35) meter.hidden = true;
 
     if (G.phase !== 'run') return;
     if (r.mode === 'wreck' || r.landed) { setPrompt('', false); return; }
@@ -820,11 +1252,19 @@
   }
 
   // ---------- Döngü ----------
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / Math.max(1, h);
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
   function frame(now) {
     const dtReal = Math.min(0.05, (now - (G.last || now)) / 1000);
     G.last = now;
-    G.t = (G.t || 0) + dtReal;
-
+    G.t += dtReal;
     if (G.slowT > 0) { G.slowT -= dtReal; if (G.slowT <= 0) G.slow = 1; }
     const dt = dtReal * G.slow;
 
@@ -834,11 +1274,7 @@
       const n = Math.floor(G.countT / 0.45);
       for (let i = 0; i < 3; i++) lights[i].className = n >= 3 ? 'g' : i < n + 1 ? 'r' : '';
       setPrompt(n >= 3 ? 'Git!' : 'Hazır…', false);
-      if (G.countT > 1.45) {
-        G.phase = 'run';
-        $('lights').hidden = true;
-        if (G.run) G.run.hold = false;
-      }
+      if (G.countT > 1.45) { G.phase = 'run'; $('lights').hidden = true; if (G.run) G.run.hold = false; }
     }
 
     const r = G.run;
@@ -848,44 +1284,42 @@
       while (G.acc >= SJ.DT && n < 40) { SJ.step(r); G.acc -= SJ.DT; n++; }
       handleEvents();
       flightComments(r);
-      // Tekerlek dönüşü ve kar tozu
       if (r.mode === 'ground') {
         G.wheelSpin = r.v / r.car.wr;
-        if (r.v > 8 && Math.random() < 0.7) {
-          const p = { x: r.x - Math.cos(r.phi) * r.car.wb / 2, y: r.y };
-          puff(p.x, p.y + 0.1, -r.v * 0.08, 0.6, 1, 'snow', 0.35, 0.6, 1.5);
+        if (r.v > 6) {
+          const k = Math.min(4, Math.floor(r.v / 14));
+          const rx = r.x - Math.cos(r.phi) * r.car.wb / 2;
+          for (let i = 0; i < k; i++) {
+            for (const s of [-1, 1]) PS.spawn(rx, r.y + 0.1, s * (CAR_W[r.car.id] / 2 - 0.2), r.v * Math.cos(r.phi) * 0.55, 1 + Math.random() * 2, s * (1 + Math.random() * 2), 0.5 + Math.random() * 0.4);
+          }
         }
       } else G.wheelSpin *= 1 - 0.3 * dt;
       G.wheelRot += G.wheelSpin * dt;
-
       if (G.phase === 'run') {
         const t0 = r.landT || 0;
-        const ready = r.done || (r.dnf && r.t - t0 > 2.5) || (r.landed && !r.crashed && r.t - t0 > 2.6) || (r.crashed && r.landed && r.t - t0 > 3.6);
+        const ready = r.done || (r.dnf && r.t - t0 > 2.5) || (r.landed && !r.crashed && r.t - t0 > 2.8) || (r.crashed && r.landed && r.t - t0 > 3.8);
         if (ready) showResult();
       }
       updateHud(r);
     }
-    updateParticles(dt);
+    PS.update(dt);
+    debris.update(dt);
+    syncCar(dt);
     updateCamera(dtReal);
+    flakes.update(dtReal, G.t, camera.position);
+    if (Math.abs(camera.position.x - hill.xFlat) < 420) animateCrowd(G.t, !!(r && r.jumped && Math.abs(r.x - hill.xFlat) < 260));
+    // Güneş ve gölge kamerası arabayı takip eder
+    const focus = activeCar ? activeCar.group.position : camState.look;
+    sun.target.position.copy(focus);
+    sun.position.copy(focus).addScaledVector(SUN_DIR, 120);
     updateAudio();
-
     if (tickerTimer > 0) { tickerTimer -= dtReal; if (tickerTimer <= 0) $('ticker').classList.remove('on'); }
-
-    // Çiz
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    const sh = G.cam.shake;
-    if (sh > 0) ctx.translate((Math.random() - 0.5) * sh * 14, (Math.random() - 0.5) * sh * 14);
-    drawSky();
-    drawWorld(G.t);
-    if (r && G.phase !== 'menu') {
-      drawParticles();
-      drawCar(r);
-      drawSpeedLines(r);
-    }
+    renderer.render(scene, camera);
     requestAnimationFrame(frame);
   }
 
   window.__sj = G; // hata ayıklama için
+  $('loading').hidden = true;
   showMenu();
   requestAnimationFrame(frame);
 })();
