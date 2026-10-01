@@ -60,6 +60,7 @@
     FLATTEN: 190,   // düzleşme mesafesi
     NZ0: 30,     // nitro bölgesi başlangıcı (x)
     NZ1: 150,    // nitro bölgesi sonu; sonrası kusursuz rampa
+    BARRIER: 60, // pist sonundaki reklam panosu duvarı: düzlüğün başlangıcından sonra (m)
     BUMPS: [],
   };
 
@@ -178,6 +179,7 @@
     hill.HS = Math.round(hill.arcAt(TO + dK + cfg.FLATTEN * 0.3) / 5) * 5;
     hill.xFlat = TO + dFlat;
     hill.mPerPoint = 0.4;
+    hill.xBarrier = hill.xFlat + cfg.BARRIER;
     return hill;
   }
 
@@ -185,12 +187,13 @@
     return {
       car, hill, wind, windNow: wind,
       mode: 'ground', t: 0,
-      x: 2, y: hill.y(2), v: 0, vx: 0, vy: 0, phi: 0, om: 0,
+      x: 2, y: hill.y(2), v: 0, vx: 0, vy: 0, phi: Math.atan(hill.slope(2)), om: 0,
       hold: false, nitro: 0, nitroUsed: false, nitroDist: 0,
       tapX: null, late: false, jumped: false, q: null, airT: 0,
       landed: false, landT: 0, dist: null, landDiff: 0, landVn: 0,
       crashed: false, dnf: false, done: false, doneT: 0,
       maxSpeed: 0, edgeSpeed: 0, maxHeight: 0, events: [],
+      wallHit: false, wallT: 0, wallSpeed: 0, damage: 0,
     };
   }
 
@@ -263,8 +266,8 @@
     // Erken kaldırılan burun rampada hava freni gibi çalışır
     const noseUp = !r.jumped && r.tapX !== null && r.hold ? 2.2 : 1;
     F -= 0.5 * RHO * c.cda * noseUp * va * Math.abs(va);
-    F -= c.crr * c.mass * G * cth * (r.v >= 0 ? 1 : -1);
-    if (r.landed && r.t - r.landT > 0.8) F -= 0.85 * c.mass * G * (r.v >= 0 ? 1 : -1);
+    // İnişten sonra pist buz: araç durmadan pist sonundaki panolara kayar
+    F -= c.crr * (r.landed ? 0.4 : 1) * c.mass * G * cth * (r.v >= 0 ? 1 : -1);
     r.v += (F / c.mass) * DT;
     if (r.landed && r.v < 0.4 && r.t - r.landT > 1) r.v = 0;
     r.x += r.v * cth * DT;
@@ -418,6 +421,27 @@
     if ((Math.hypot(r.vx, r.vy) < 0.6 && r.wreckT > 1.5) || r.wreckT > 9) finish(r);
   }
 
+  // Pist sonundaki panolara çarpma: panolar parçalanır, araç takla atarak geri sekip durur
+  function hitWall(r) {
+    const c = r.car, h = r.hill;
+    const sp = r.mode === 'ground' ? r.v : Math.hypot(r.vx, r.vy);
+    if (r.mode !== 'wreck') {
+      r.x += -Math.sin(r.phi) * c.h / 2;
+      r.y += Math.cos(r.phi) * c.h / 2;
+    }
+    const vfx = r.mode === 'ground' ? r.v * Math.cos(r.phi) : r.vx;
+    r.mode = 'wreck';
+    r.wallHit = true;
+    r.wallT = r.t;
+    r.wallSpeed = Math.abs(sp);
+    r.damage = Math.round(0.5 * c.mass * sp * sp / 40 / 100) * 100;
+    r.vx = -Math.abs(vfx) * 0.06;
+    r.vy = 3 + Math.abs(sp) * 0.09;
+    r.om = -(4 + Math.abs(sp) * 0.07);
+    r.wreckT = 0;
+    ev(r, 'wall', { speed: r.wallSpeed, damage: r.damage });
+  }
+
   function finish(r) {
     if (r.done) return;
     r.done = true;
@@ -432,6 +456,11 @@
     if (r.mode === 'ground') groundStep(r);
     else if (r.mode === 'air') airStep(r);
     else wreckStep(r);
+    const xb = r.hill.xBarrier;
+    if (!r.wallHit) {
+      const front = r.mode === 'wreck' ? r.x + r.car.len / 2 : r.x + Math.cos(r.phi) * r.car.len / 2;
+      if (front >= xb) hitWall(r);
+    } else if (r.x > xb - 0.6) { r.x = xb - 0.6; r.vx = -Math.abs(r.vx) * 0.3; }
     if (r.t > 45) finish(r);
     const sp = r.mode === 'wreck' ? 0 : speedOf(r);
     if (!r.jumped) r.maxSpeed = Math.max(r.maxSpeed, sp);

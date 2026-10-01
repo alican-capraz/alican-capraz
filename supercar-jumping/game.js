@@ -765,7 +765,7 @@
   }
 
   // Garaj döner platformu
-  const SHOW_X = hill.xFlat + 75;
+  const SHOW_X = hill.xBarrier + 45;
   const showY = trackY(SHOW_X);
   const turntable = new T.Group();
   {
@@ -818,6 +818,82 @@
   function burst(x, y, z, vx, vy, n, spread, l) {
     for (let i = 0; i < n; i++) PS.spawn(x, y, z + (Math.random() - 0.5) * 1.6, vx + (Math.random() - 0.5) * spread, vy + Math.random() * spread * 0.6, (Math.random() - 0.5) * spread, l * (0.6 + Math.random() * 0.7));
   }
+  // Pist sonu: reklam panosu duvarı ve arkasında kar seti. Araba çarpınca panolar parçalanıp uçar.
+  const barrier = (() => {
+    const XB = hill.xBarrier;
+    const yb = trackY(XB);
+    const span = halfW(XB) + 4;
+    const boards = [];
+    const BW = 2.6, BH = 2.1;
+    const palette = [0x0b1730, 0xe1342a, 0xf5b700, 0xf5f8fb, 0x1d4fbf].map(lin);
+    let i = 0;
+    for (let z = -span + BW / 2; z <= span - BW / 2 + 0.01; z += BW, i++) {
+      const g = new T.Group();
+      const back = new T.Mesh(new T.BoxGeometry(0.16, BH, BW - 0.06), gateFrame);
+      g.add(back);
+      const face = new T.Mesh(new T.PlaneGeometry(BW - 0.1, BH - 0.2), bannerMats[i % bannerMats.length]);
+      face.rotation.y = -Math.PI / 2; face.position.x = -0.09;
+      g.add(face);
+      g.position.set(XB, yb + BH / 2 + 0.1, z);
+      g.children.forEach((m) => { m.castShadow = true; });
+      scene.add(g);
+      boards.push({ g, z, color: palette[i % palette.length] });
+    }
+    const bank = new T.Mesh(new T.BoxGeometry(7, 3.4, span * 2 + 6), new T.MeshStandardMaterial({ color: lin(0xeef3f9), roughness: 0.95 }));
+    bank.position.set(XB + 3.8, yb + 1.5, 0); bank.receiveShadow = true;
+    scene.add(bank);
+    // Uçan pano parçaları
+    const N = 60;
+    const bits = new T.InstancedMesh(new T.BoxGeometry(1.2, 0.7, 0.06), new T.MeshStandardMaterial({ roughness: 0.6 }), N);
+    bits.castShadow = true; bits.frustumCulled = false;
+    const d = [];
+    const m4 = new T.Matrix4(), q = new T.Quaternion(), one = new T.Vector3(1, 1, 1);
+    for (let k = 0; k < N; k++) { d.push({ p: new T.Vector3(0, -1e5, 0), v: new T.Vector3(), r: new T.Euler(), w: new T.Vector3(), on: false }); bits.setColorAt(k, palette[k % palette.length]); }
+    scene.add(bits);
+    let head = 0;
+    return {
+      XB,
+      reset() {
+        boards.forEach((b) => { b.g.visible = true; b.g.rotation.set(0, 0, 0); b.g.position.x = XB; });
+        d.forEach((o) => { o.on = false; o.p.set(0, -1e5, 0); });
+      },
+      smash(speed, carZ) {
+        boards.forEach((b) => {
+          const near = Math.abs(b.z - carZ);
+          if (near < 4.2) {
+            b.g.visible = false;
+            for (let k = 0; k < 7; k++) {
+              const o = d[head]; head = (head + 1) % N;
+              o.on = true;
+              o.p.set(XB, yb + 0.5 + Math.random() * 1.8, b.z + (Math.random() - 0.5) * 2);
+              o.v.set(speed * (0.25 + Math.random() * 0.35), 6 + Math.random() * speed * 0.18, (Math.random() - 0.5) * speed * 0.25);
+              o.w.set((Math.random() - 0.5) * 18, (Math.random() - 0.5) * 18, (Math.random() - 0.5) * 18);
+              bits.setColorAt((head + N - 1) % N, b.color);
+            }
+          } else if (near < 8) {
+            b.g.rotation.z = -(0.5 + Math.random() * 0.6) * (1 - near / 8) * 1.6; // komşu panolar geriye devrilir
+          }
+        });
+        if (bits.instanceColor) bits.instanceColor.needsUpdate = true;
+      },
+      update(dt) {
+        for (let k = 0; k < N; k++) {
+          const o = d[k];
+          if (o.on) {
+            o.v.y -= 9.81 * dt;
+            o.v.multiplyScalar(1 - 0.35 * dt);
+            o.p.addScaledVector(o.v, dt);
+            const gy = terrainY(o.p.x, o.p.z) + 0.05;
+            if (o.p.y < gy) { o.p.y = gy; o.v.y = Math.abs(o.v.y) * 0.2; o.v.x *= 0.5; o.v.z *= 0.5; o.w.multiplyScalar(0.5); }
+            o.r.x += o.w.x * dt; o.r.y += o.w.y * dt; o.r.z += o.w.z * dt;
+          }
+          q.setFromEuler(o.r); m4.compose(o.p, q, one); bits.setMatrixAt(k, m4);
+        }
+        bits.instanceMatrix.needsUpdate = true;
+      },
+    };
+  })();
+
   const debris = (() => {
     const N = 36;
     const mesh = new T.InstancedMesh(new T.BoxGeometry(0.35, 0.08, 0.25), new T.MeshStandardMaterial({ color: lin(0x22252b), roughness: 0.6, metalness: 0.4 }), N);
@@ -970,6 +1046,7 @@
     pop: () => { burstSound('highpass', 1400, 0.7, 0.35, 0.06); sub(140, 60, 0.25, 0.08); },
     nitro: () => { burstSound('highpass', 300, 0.8, 0.9, 0.7, 4200); sub(70, 40, 0.7, 0.5); },
     gate: (k) => burstSound('bandpass', 900 + k * 900, 1.4, 0.18 + k * 0.12, 0.16, 300),
+    wall: (k) => { burstSound('lowpass', 900, 0.7, 1, 0.9 * k); burstSound('bandpass', 2600, 2, 0.45 * k, 0.6); burstSound('bandpass', 5200, 3, 0.25 * k, 0.45); sub(70, 25, 0.9, 0.8); },
     crowd: (k) => { burstSound('bandpass', 850, 0.4, 0.35 * k, 2.4); burstSound('bandpass', 1900, 0.6, 0.18 * k, 1.8); },
   };
   function updateAudio(dt) {
@@ -994,8 +1071,9 @@
       const load = r.landed ? 0.25 : r.mode === 'air' ? 0.55 : 1;
       ef = 34 + A.rpm * 170 + (r.nitro ? 14 : 0);
       cut = 500 + A.rpm * 2600 * load + (r.nitro ? 1200 : 0);
-      eg = (r.landed ? 0.12 : 0.3) + (r.nitro ? 0.1 : 0);
-      ig = 0.05 + A.rpm * 0.1 * load;
+      const coast = r.landed ? clamp(sp / 40, 0, 1) : 1; // durunca motor sesi tamamen kesilir
+      eg = (r.landed ? 0.12 : 0.3) * coast + (r.nitro ? 0.1 : 0);
+      ig = (0.05 + A.rpm * 0.1 * load) * coast;
       wf = 250 + sp * 14;
       wg = clamp(sp / 90, 0, 1) * (r.mode === 'air' ? 0.55 : 0.22);
       rg = r.nitro ? 0.55 : 0;
@@ -1078,7 +1156,7 @@
     $('menu').hidden = false; $('result').hidden = true; $('hud').hidden = true;
     turntable.visible = true;
     beat.set(null);
-    PS.clear(); debris.clear();
+    PS.clear(); debris.clear(); barrier.reset();
     renderGarage();
   }
   function startRun() {
@@ -1088,7 +1166,7 @@
     G.wind = Math.round((Math.random() * 8 - 4) * 10) / 10;
     G.run = SJ.newRun(car, hill, G.wind);
     G.evIdx = 0; G.flags = {}; G.gateIdx = 0; G.kick = 0; G.kickV = 0; A.gear = 1; G.slow = 1; G.slowT = 0; G.wheelRot = 0; G.wheelSpin = 0; G.roll = 0; G.rollW = 0; G.acc = 0;
-    PS.clear(); debris.clear();
+    PS.clear(); debris.clear(); barrier.reset();
     G.toBeat = bestDistance();
     beat.set(G.toBeat);
     turntable.visible = false;
@@ -1201,6 +1279,17 @@
           say(r.dnf ? 'Ve kaza! İnişte kontrolü kaybetti, diskalifiye!' : pick(['Ve kaza! Araç takla atıyor!', 'Olamaz! Sert iniş, araba paramparça!', 'Kaza! Mesafe sayılır ama stil puanı uçtu.']), 3.5);
           break;
         }
+        case 'wall': {
+          const p = carCenter(r);
+          barrier.smash(e.speed, 0);
+          debris.spawn(p.x, p.y, -4, 6, 26, lin(car.color));
+          burst(hill.xBarrier - 1, p.y, 0, 6, 8, 160, 16, 1.8);
+          G.shake = 1.8; G.slow = 0.28; G.slowT = 1.1; G.flash = 0.8;
+          G.rollW = (Math.random() < 0.5 ? -1 : 1) * (5 + Math.random() * 5);
+          SFX.wall(clamp(e.speed / 80, 0.4, 1.4)); buzz([120, 50, 200]);
+          say(pick([`Ve panolara ${Math.round(e.speed * 3.6)} km/sa ile daldı! Ortalık savaş alanı!`, 'Panolar paramparça! Bu reklamın faturası ağır olacak!', 'Duvara tam gaz! Araba takla atıyor!']), 3.5);
+          break;
+        }
         case 'impact': { const p = carCenter(r); burst(p.x, p.y - 0.4, 0, r.vx * 0.3, 3, 30, 7, 1.1); debris.spawn(p.x, p.y, r.vx * 0.5, 3, 3); thump(clamp(e.hit / 15, 0.2, 1)); G.shake = Math.max(G.shake, 0.5); break; }
         default: break;
       }
@@ -1246,6 +1335,7 @@
         <div class="res-dist">${sc.dnf ? '—' : sc.dist.toFixed(1)}<small>m</small></div>
         <div class="res-total"><small>Toplam puan</small><b>${sc.total.toFixed(1)}</b></div>
         <div class="res-note">${note}</div>
+        ${r.wallHit ? `<div class="res-damage"><span>Hasar bedeli</span><b>${r.damage.toLocaleString('tr-TR')} ₺</b><span>Panolara ${Math.round(r.wallSpeed * 3.6)} km/sa ile çarptı</span></div>` : ''}
       </div>
       ${sc.dnf ? '' : `<div class="res-table">
         <div class="judges"><span class="jl">Hakemler</span>${judgesHtml}</div>
@@ -1529,14 +1619,16 @@
       G.wheelRot += G.wheelSpin * dt;
       if (G.phase === 'run') {
         const t0 = r.landT || 0;
-        const ready = r.done || (r.dnf && r.t - t0 > 2.5) || (r.landed && !r.crashed && r.t - t0 > 2.8) || (r.crashed && r.landed && r.t - t0 > 3.8);
+        const ready = r.done || (r.dnf && r.t - t0 > 2.5) || (r.wallHit && r.t - r.wallT > 2.8) || (r.crashed && r.landed && r.t - t0 > 9);
         if (ready) showResult();
       }
       gatePass(r);
+      if (r.landed && !r.crashed && !r.wallHit && !G.flags.ice && r.t - r.landT > 1.3) { G.flags.ice = true; say(pick(['Pist buz gibi, durmuyor... panolar geliyor!', 'Fren yok, buzda kayıyor! Panolara dikkat!']), 2.5); }
       updateHud(r);
     }
     PS.update(dt);
     debris.update(dt);
+    barrier.update(dt);
     syncCar(dt);
     updateCamera(dtReal);
     flakes.update(dtReal, G.t, camera.position);
