@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Bilim Müşavirlik Broşür</title>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #FBFAF6;
+    --grid-minor: #F7E9DC;
+    --grid-major: #EFD0B6;
+    --ink: #172A4E;
+    --pencil: #4F596B;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 1080px; height: 1350px; overflow: hidden; position: relative;
+    font-family: "Hanken Grotesk", sans-serif; color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    background-color: var(--paper);
+    /* milimetrik kâğıt: 9px ince, 45px kalın çizgi */
+    background-image:
+      linear-gradient(to right, var(--grid-major) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-major) 1px, transparent 1px),
+      linear-gradient(to right, var(--grid-minor) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-minor) 1px, transparent 1px);
+    background-size: 45px 45px, 45px 45px, 9px 9px, 9px 9px;
+  }
+  .abs { position: absolute; }
+
+  .brand { left: 90px; top: 76px; }
+  .brand b { display: block; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; }
+  .brand span { display: block; font-size: 16px; color: var(--pencil); margin-top: 2px; }
+
+  .lead { left: 90px; top: 172px; width: 460px; display: flex; flex-direction: column; }
+  h1 { font-size: 66px; line-height: 1.0; font-weight: 600; letter-spacing: -0.035em; }
+  .intro { margin-top: 36px; font-size: 22px; line-height: 1.43; }
+  .about { margin-top: 28px; font-size: 18px; line-height: 1.5; color: var(--pencil); }
+  .about b { color: var(--ink); font-weight: 600; }
+
+  .photo { left: 585px; top: 135px; width: 495px; height: 585px; object-fit: cover; object-position: 50% 16%; }
+  .caption { left: 585px; top: 732px; font-size: 16px; color: var(--pencil); }
+  .caption b { color: var(--ink); font-weight: 600; }
+
+  .services { left: 90px; top: 810px; width: 900px; }
+  .services h2 { font-size: 22px; font-weight: 700; margin-bottom: 18px; }
+  .list { display: grid; grid-template-columns: 405px 405px; column-gap: 90px; row-gap: 32px; }
+  .list h3 { font-size: 22px; font-weight: 600; line-height: 1.2; }
+  .list p { font-size: 17px; line-height: 1.4; color: var(--pencil); margin-top: 3px; }
+
+
+  .contact {
+    left: 0; right: 0; top: 1215px; height: 135px; background: var(--ink); color: #fff;
+    display: flex; align-items: center; justify-content: space-between; padding: 0 90px;
+  }
+  .contact .tel { font-size: 34px; font-weight: 600; letter-spacing: -0.01em; }
+  .contact .tel span { margin-right: 36px; }
+  .contact .meta { font-size: 17px; line-height: 1.5; text-align: right; color: #C9D1E0; }
+</style>
+</head>
+<body>
+  <div class="abs brand"><b>Bilim Müşavirlik</b><span>Kasım Çapraz SMMM A.Ş.</span></div>
+
+  <div class="abs lead">
+    <h1>Mali müşavirlik<br>ve kurumsal<br>danışmanlık</h1>
+    <p class="intro">İstek ve alışkanlıklara göre yönetimden, bilimsel metodoloji ile kurumsal yönetime geçişte yanınızdayız.</p>
+    <p class="about"><b>1973’ten beri Bursa’da</b> KOBİ’lere danışmanlık veriyoruz. TSE TS 13573 Hizmet Yeterlilik Belgesi sahibiyiz.</p>
+  </div>
+
+  <img class="abs photo" src="kasim-capraz.jpg" alt="Kasım Çapraz">
+  <p class="abs caption"><b>Kasım Çapraz</b>, Serbest Muhasebeci Mali Müşavir</p>
+
+  <section class="abs services">
+    <h2>Hizmet alanlarımız</h2>
+    <div class="list">
+      <div><h3>Şirket yapılandırması</h3><p>Birleşme, bölünme, tür değiştirme ve kurumsallaşma</p></div>
+      <div><h3>Fizibilite ve değerleme</h3><p>Şirket ve proje değerlemesi, yatırım analizleri</p></div>
+      <div><h3>Finansal planlama</h3><p>Bütçe sistemi, iç kontrol ve mali denetim</p></div>
+      <div><h3>Vergi planlaması</h3><p>Kâr ve vergi optimizasyonu, kişisel servet planlaması</p></div>
+      <div><h3>Yönetim muhasebesi</h3><p>Performans değerlendirmesi ve stratejik raporlama</p></div>
+      <div><h3>Yönetici eğitimi</h3><p>Mali, ticari ve finansal yönetici gelişim programları</p></div>
+    </div>
+  </section>
+
+
+  <div class="abs contact">
+    <div class="tel"><span>0224 453 52 00</span><span>0532 613 04 54</span></div>
+    <div class="meta">bilim@bilimmusavirlik.com.tr<br>Nilüfer, Bursa</div>
+  </div>
+</body>
+</html>
