@@ -1,0 +1,33 @@
+/* Bilim Müşavirlik ortak kimlik: logo laciverti, beyaz, tek serif + tek sans */
+@import url("https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,500;1,300&family=Albert+Sans:wght@400;500;600&display=swap");
+
+:root {
+  --navy: #191F55;       /* logodan alındı */
+  --navy-deep: #10143B;
+  --rule-on: rgba(255, 255, 255, .22);
+  --on: #F1F2F8;
+  --on-soft: #B7BCDA;
+  --paper: #FFFFFF;
+  --mist: #F2F3F7;
+  --ink: #191F55;
+  --ink-soft: #565B74;
+  --rule: #D5D8E4;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  position: relative; overflow: hidden;
+  font-family: "Albert Sans", sans-serif; color: var(--on);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "kern", "liga";
+}
+.abs { position: absolute; }
+.serif { font-family: "Spectral", serif; }
+
+.display {
+  font-family: "Spectral", serif; font-weight: 300;
+  letter-spacing: -.022em; line-height: 1.02;
+}
+p { text-wrap: pretty; }
+
+.photo { object-fit: cover; filter: saturate(.92) contrast(1.03); }

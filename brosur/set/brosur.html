@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Bilim Müşavirlik Broşür</title>
+<link rel="stylesheet" href="set.css">
+<style>
+  body { width: 1080px; height: 1350px; background: var(--paper); }
+
+  .field { left: 0; top: 0; width: 1080px; height: 836px; background: var(--navy); }
+  .photo { left: 612px; top: 0; width: 468px; height: 836px; object-position: 47% 30%; }
+
+  .logo { left: 80px; top: 72px; width: 400px; }
+
+  h1 { left: 80px; top: 262px; width: 500px; font-size: 78px; color: var(--on); }
+  .intro { left: 80px; top: 548px; width: 440px; font-size: 19px; line-height: 1.55; color: var(--on-soft); }
+  .intro b { color: var(--on); font-weight: 500; }
+
+  .sign { left: 80px; top: 676px; width: 460px; border-top: 1px solid var(--rule-on); padding-top: 22px; }
+  .sign b { display: block; font-family: "Spectral", serif; font-weight: 400; font-size: 24px; color: var(--on); }
+  .sign span { display: block; font-size: 15px; color: var(--on-soft); margin-top: 4px; }
+
+  .services { left: 80px; top: 904px; width: 920px; color: var(--ink); }
+  .services h2 { font-family: "Spectral", serif; font-weight: 400; font-size: 26px; letter-spacing: -.005em; margin-bottom: 26px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 44px; row-gap: 30px; }
+  .grid div { border-top: 2px solid var(--ink); padding-top: 14px; }
+  .grid h3 { font-size: 18px; font-weight: 600; line-height: 1.25; letter-spacing: -.005em; }
+  .grid p { font-size: 15px; line-height: 1.45; color: var(--ink-soft); margin-top: 5px; }
+
+  .contact {
+    left: 0; top: 1230px; width: 1080px; height: 120px; background: var(--navy-deep);
+    display: flex; align-items: center; justify-content: space-between; padding: 0 80px;
+  }
+  .tel { font-family: "Spectral", serif; font-size: 34px; letter-spacing: .01em; color: var(--on); }
+  .tel span + span { margin-left: 40px; }
+  .meta { text-align: right; font-size: 16px; line-height: 1.55; color: var(--on-soft); }
+  .meta b { color: var(--on); font-weight: 500; }
+</style>
+</head>
+<body>
+  <div class="abs field"></div>
+  <img class="abs photo" src="../kasim-capraz.jpg" alt="Kasım Çapraz">
+  <img class="abs logo" src="../bilim-logo-beyaz-hd.png" alt="Bilim Müşavirlik, Kasım Çapraz SMMM A.Ş.">
+
+  <h1 class="abs display">Alışkanlıkla değil, yöntemle yönetin.</h1>
+  <p class="abs intro">1973’ten bu yana Bursa’da KOBİ’lerin ve aile şirketlerinin <b>bilimsel yöntemle kurumsal yönetime</b> geçişinde yanındayız.</p>
+
+  <div class="abs sign">
+    <b>Kasım Çapraz</b>
+    <span>Serbest Muhasebeci Mali Müşavir</span>
+    <span>TSE TS 13573 Hizmet Yeterlilik Belgesi</span>
+  </div>
+
+  <section class="abs services">
+    <h2>Mali müşavirlik ve kurumsal danışmanlık</h2>
+    <div class="grid">
+      <div><h3>Şirket yapılandırması</h3><p>Birleşme, bölünme, tür değiştirme ve kurumsallaşma</p></div>
+      <div><h3>Finansal planlama</h3><p>Bütçe sistemi, iç kontrol ve mali denetim</p></div>
+      <div><h3>Yönetim muhasebesi</h3><p>Performans değerlendirmesi ve stratejik raporlama</p></div>
+      <div><h3>Fizibilite ve değerleme</h3><p>Şirket ve proje değerlemesi, yatırım analizleri</p></div>
+      <div><h3>Vergi planlaması</h3><p>Kâr ve vergi optimizasyonu, kişisel servet planlaması</p></div>
+      <div><h3>Yönetici eğitimi</h3><p>Mali, ticari ve finansal yönetici gelişim programları</p></div>
+    </div>
+  </section>
+
+  <div class="abs contact">
+    <div class="tel"><span>0224 453 52 00</span><span>0532 613 04 54</span></div>
+    <div class="meta"><b>bilim@bilimmusavirlik.com.tr</b><br>Nilüfer, Bursa</div>
+  </div>
+</body>
+</html>
